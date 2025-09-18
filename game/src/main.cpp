@@ -1,30 +1,66 @@
+/*
+This project uses the Raylib framework to provide us functionality for math, graphics, GUI, input etc.
+See documentation here: https://www.raylib.com/, and examples here: https://www.raylib.com/examples.html
+*/
+
 #include "raylib.h"
 #include "raymath.h"
+#define RAYGUI_IMPLEMENTATION
+#include "raygui.h"
+#include "game.h"
+
+const unsigned int TARGET_FPS = 50; //frames/second
+float dt = 1.0f / TARGET_FPS; //seconds/frame
+float time = 0;
+float x = 500;
+float y = 500;
+float frequency = 1;
+float amplitude = 100;
+Vector2 startOfLine = { 100, 100 };
+Vector2 endOfLine = { 700, 100 };
+
+//Changes world state
+void update()
+{
+	dt = 1.0f / TARGET_FPS;
+	time += dt;
+
+	x = x + (-sin(time * frequency)) * frequency * amplitude * dt;
+	y = y + (cos(time * frequency)) * frequency * amplitude * dt;
+}
+
+//Display world state
+void draw()
+{
+	BeginDrawing();
+
+	ClearBackground(PURPLE);
+	DrawText("Hoora Maleki 101579782", 10, float(GetScreenHeight() - 30), 20, BLACK);
+
+
+	GuiSliderBar(Rectangle{ 10, 15, 1000, 20 }, "", TextFormat("%.2f", time), &time, 0, 240);
+	DrawText(TextFormat("T: %6.2f", time), GetScreenWidth() - 140, 10, 30, BLACK);
+
+	DrawCircle(x, y, 70, PINK);
+	DrawCircle(500 + cos(time * frequency) * amplitude, 500 + sin(time * frequency) * amplitude, 70, DARKPURPLE);
+
+	DrawLineEx(startOfLine, endOfLine, 10.0f, BLACK);
+
+	EndDrawing();
+
+}
 
 int main()
 {
-    InitWindow(800, 800, "Physics-1");
+	InitWindow(InitialWidth, InitialHeight, "GAME2005 Hoora Maleki 101579782");
+	SetTargetFPS(TARGET_FPS);
 
-    Vector2 circle_position_1 = { 400.0f, 400.0f };
-    Vector2 circle_position_2 = { 400.0f, 400.0f };
-    float circle_radius = 25.0f;
-    Color circle_color = PURPLE;
+	while (!WindowShouldClose()) // Loops TARGET_FPS times per second
+	{
+		update();
+		draw();
+	}
 
-    while (!WindowShouldClose())
-    {
-        float t = GetTime();
-        float dt = GetFrameTime();
-        circle_position_1.x = 400.0f + 150.0f * sinf(t);    // moves left/right within a range of 150 units forever
-        circle_position_2.y += 10.0f * dt;                  // moves down at 10 units per second
-
-        BeginDrawing();
-            ClearBackground(WHITE);
-            DrawText("Hello world!", 10, 10, 20, LIGHTGRAY);
-            DrawCircleV(circle_position_1, circle_radius, circle_color);
-            DrawCircleV(circle_position_2, circle_radius, circle_color);
-        EndDrawing();
-    }
-
-    CloseWindow();
-    return 0;
+	CloseWindow();
+	return 0;
 }
