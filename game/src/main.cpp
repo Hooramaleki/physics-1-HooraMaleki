@@ -9,71 +9,107 @@ See documentation here: https://www.raylib.com/, and examples here: https://www.
 #include "raygui.h"
 #include "game.h"
 
-const unsigned int TARGET_FPS = 50; //frames/second
-float dt = 1.0f / TARGET_FPS; //seconds/frame
-float time = 0;
-float x = 500;
-float y = 500;
-float frequency = 1;
-float amplitude = 100;
-float speed = 100;
-float angle = 30;
+//global variables
+const unsigned int TARGET_FPS = 50; // Frames per second
+float dt = 1.0f / TARGET_FPS;       // Delta time 
+float time = 0;                     
+
+// the projectile launch parameters
+Vector2 launchPosition = { 200.0f, 0.0f }; //start position (Y is set in main/draw)
+float launchSpeed = 100.0f;                //speed in pixels/second
+float launchAngle = 30.0f;                 //angle in degrees
 
 
-//Changes world state
 void update()
 {
-	dt = 1.0f / TARGET_FPS;
-	time += dt;
-
-	x = x + (-sin(time * frequency)) * frequency * amplitude * dt;
-	y = y + (cos(time * frequency)) * frequency * amplitude * dt;
+    dt = 1.0f / TARGET_FPS;
+    time += dt;
 }
 
-//Display world state
+
 void draw()
 {
-	BeginDrawing();
+    BeginDrawing();
+
+    //clear screen and set background color
+    ClearBackground(DARKPURPLE);
 
 
-	ClearBackground(DARKPURPLE);
-	DrawText("Hoora Maleki 101579782", 10, float(GetScreenHeight() - 30), 20, BLACK);
+    DrawText("Hoora Maleki 101579782", 10, float(GetScreenHeight() - 30), 20, BLACK);
+
+    //time slider and the text
+    GuiSliderBar(Rectangle{ 10, 15, 1000, 20 }, "", TextFormat("%.2f", time), &time, 0, 240);
+    DrawText(TextFormat("T: %6.2f", time), GetScreenWidth() - 140, 10, 30, BLACK);
+
+    //set initial launch position Y if not yet set
+    if (launchPosition.y == 0.0f)
+        launchPosition.y = GetScreenHeight() - 200.0f;
+
+    //sliders for adjusting position, angle, and speed with texts
+
+    DrawText("Launch Position (X):", 10, 60, 14, RAYWHITE);
+    //GuiSliderBar(Rectangle{ x, y, width, height }, leftText, rightText, &value, minValue, maxValue);
+    GuiSliderBar(Rectangle{ 10, 80, 300, 20 }, "", TextFormat("%.0f", launchPosition.x), &launchPosition.x, 0.0f, (float)GetScreenWidth());
+
+    DrawText("Launch Position (Y):", 10, 110, 14, RAYWHITE);
+    GuiSliderBar(Rectangle{ 10, 130, 300, 20 }, "", TextFormat("%.0f", launchPosition.y), &launchPosition.y, 0.0f, (float)GetScreenHeight());
+
+    DrawText("Launch Angle (deg):", 10, 160, 14, RAYWHITE);
+    GuiSliderBar(Rectangle{ 10, 180, 300, 20 }, "", TextFormat("%.1f", launchAngle), &launchAngle, -180.0f, 180.0f);
+
+    DrawText("Launch Speed (px/s):", 10, 210, 14, RAYWHITE);
+    GuiSliderBar(Rectangle{ 10, 230, 300, 20 }, "", TextFormat("%.0f", launchSpeed), &launchSpeed, -500.0f, 2000.0f);
 
 
-	GuiSliderBar(Rectangle{ 10, 15, 1000, 20 }, "", TextFormat("%.2f", time), &time, 0, 240);
-	DrawText(TextFormat("T: %6.2f", time), GetScreenWidth() - 140, 10, 30, BLACK);
+    //compute initial velocity vector (angle converted drom degree to radians)
+    Vector2 initialVelocity = { cosf(launchAngle * DEG2RAD) * launchSpeed,
+                               -sinf(launchAngle * DEG2RAD) * launchSpeed };
 
+    //draw velocity vector
+    const float drawScale = 0.5f;
+    Vector2 lineEnd = Vector2Scale(initialVelocity, drawScale);
+    lineEnd = Vector2Add(launchPosition, lineEnd);
+    DrawLineEx(launchPosition, lineEnd, 4.0f, RED);
 
-	//slider for speed and angle
-	GuiSliderBar(Rectangle{ 10, 100, 200, 100 }, "", TextFormat("%.0f", speed), &speed, -100, 1000);
-	GuiSliderBar(Rectangle{ 10, 200, 200, 100 }, "", TextFormat("%.0f", angle), &angle, -180, 180);
+    // Draw launch point as a pink circle
+    DrawCircleV(launchPosition, 6.0f, PINK);
 
+    // Draw arrowhead for the velocity vector
+    {
+        Vector2 dir = Vector2Subtract(lineEnd, launchPosition);
+        float len = Vector2Length(dir);
+        if (len > 0.0f)
+        {
+            Vector2 nd = Vector2Scale(dir, 1.0f / len); // Normalize vector
+            float ahSize = 12.0f; // Arrowhead size
+            Vector2 left = Vector2Add(lineEnd, Vector2Scale(Vector2Rotate(nd, 150.0f * DEG2RAD), ahSize));
+            Vector2 right = Vector2Add(lineEnd, Vector2Scale(Vector2Rotate(nd, -150.0f * DEG2RAD), ahSize));
+            DrawLineEx(lineEnd, left, 3.0f, RED);
+            DrawLineEx(lineEnd, right, 3.0f, RED);
+        }
+    }
 
-	//DrawCircle(x, y, 70, PINK);
-	//DrawCircle(500 + cos(time * frequency) * amplitude, 500 + sin(time * frequency) * amplitude, 70, DARKPURPLE);
-
-
-	//drawing the line
-	Vector2 startPOS = { 200, GetScreenHeight() - 200 };
-	Vector2 velocity = { cos(angle * DEG2RAD) * speed, -sin(angle * DEG2RAD) * speed};
-
-	DrawLineEx(startPOS, startPOS + velocity, 10, BLACK);
-
-	EndDrawing();
-
+    EndDrawing();
 }
+
 
 int main()
 {
-	InitWindow(InitialWidth, InitialHeight, "GAME2005 Hoora Maleki 101579782");
-	SetTargetFPS(TARGET_FPS);
+    //create window with given width/height from game.h
+    InitWindow(InitialWidth, InitialHeight, "GAME2005 Hoora Maleki 101579782");
+    SetTargetFPS(TARGET_FPS);
 
-	while (!WindowShouldClose()) // Loops TARGET_FPS times per second
-	{
-		update();
-		draw();
-	}
+    //initialize launch position relative to screen size
+    launchPosition = { 200.0f, GetScreenHeight() - 200.0f };
 
-	CloseWindow();
-	return 0;
+    //main game loop
+    while (!WindowShouldClose()) //runs until user closes the window
+    {
+        update(); //update world state
+        draw();   //render to screen
+    }
+
+    //cleanup and exit
+    CloseWindow();
+    return 0;
 }
