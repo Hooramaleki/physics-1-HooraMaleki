@@ -1,6 +1,12 @@
-/*
-This project uses the Raylib framework to provide us functionality for math, graphics, GUI, input etc.
-See documentation here: https://www.raylib.com/, and examples here: https://www.raylib.com/examples.html
+/* Angry-bird-style projectile simulation lab
+   Uses raylib + raymath + raygui (like your original).
+   Implements:
+   - PhysicsBody struct (position, velocity, drag, mass, active)
+   - PhysicsSimulation struct (deltaTime, time, gravity)
+   - Simulation.UpdateAll(bodies) applying gravity each frame
+   - Adjustable gravity (x,y) and launch parameters via sliders
+   - SPACE launches a new body from launchPosition (repeatable)
+   - Keys 1/2/3/4 quickly set angles to 0/45/60/90 degrees for demonstration
 */
 
 #include "raylib.h"
@@ -9,107 +15,166 @@ See documentation here: https://www.raylib.com/, and examples here: https://www.
 #include "raygui.h"
 #include "game.h"
 
-//global variables
-const unsigned int TARGET_FPS = 50; // Frames per second
-float dt = 1.0f / TARGET_FPS;       // Delta time 
-float time = 0;                     
+#include <stdbool.h>
 
-// the projectile launch parameters
-Vector2 launchPosition = { 200.0f, 0.0f }; //start position (Y is set in main/draw)
-float launchSpeed = 100.0f;                //speed in pixels/second
-float launchAngle = 30.0f;                 //angle in degrees
+#define MAX_BODIES 64
 
+typedef struct PhysicsBody {
+    Vector2 position;
+    Vector2 velocity;
+    float drag; // stored (not applied in this lab)
+    float mass; // stored (not used here)
+    bool active;
+    Color color;
+} PhysicsBody;
 
-void update()
-{
-    dt = 1.0f / TARGET_FPS;
-    time += dt;
+typedef struct PhysicsSimulation {
+    float deltaTime;
+    float time;
+    Vector2 gravity; // gravity direction & magnitude (px/s^2)
+} PhysicsSimulation;
+
+// Globals (kept simple like your original)
+PhysicsBody bodies[MAX_BODIES];
+PhysicsSimulation sim;
+
+Vector2 launchPosition = { 200.0f, 0.0f };
+float launchSpeed = 400.0f;   // px/s (tweakable)
+float launchAngle = 30.0f;    // degrees
+float trailPointSize = 2.0f;  // optional visual tweak
+
+// helper: find a free body slot
+int FindFreeBodySlot(void) {
+    for (int i = 0; i < MAX_BODIES; ++i) if (!bodies[i].active) return i;
+    return -1;
 }
 
+// spawn a new body at launchPosition with initial velocity from angle & speed
+void SpawnBody(Vector2 pos, float angleDeg, float speed) {
+    int idx = FindFreeBodySlot();
+    if (idx < 0) return; // no free slot
+    PhysicsBody* b = &bodies[idx];
+    b->position = pos;
+    float rad = angleDeg * DEG2RAD;
+    // Note: screen Y increases downwards, so upward velocity is negative Y
+    b->velocity = (Vector2{ cosf(rad) * speed, -sinf(rad) * speed });
+    b->drag = 0.0f;    // store drag (not applied)
+    b->mass = 1.0f;    // default mass
+    b->active = true;
+    b->color = RED;
+}
 
-void draw()
+// Simulation update: applies gravity * deltaTime to velocity, integrates position
+void SimulationUpdate(PhysicsSimulation* s, PhysicsBody* bodyArray, int count) {
+    // use s->deltaTime already set by caller
+    for (int i = 0; i < count; ++i) {
+        PhysicsBody* b = &bodyArray[i];
+        if (!b->active) continue;
+
+        // apply gravity to velocity (accel * dt)
+        b->velocity.x += s->gravity.x * s->deltaTime;
+        b->velocity.y += s->gravity.y * s->deltaTime;
+
+        // integrate position
+        b->position.x += b->velocity.x * s->deltaTime;
+        b->position.y += b->velocity.y * s->deltaTime;
+    }
+}
+
+void ClearAllBodies(void) {
+    for (int i = 0; i < MAX_BODIES; ++i) bodies[i].active = false;
+}
+
+void update(void)
+{
+    // get real delta time each frame (more accurate than fixed-step)
+    sim.deltaTime = GetFrameTime();
+    sim.time += sim.deltaTime;
+
+    // input: quick-angle presets for demonstration
+    if (IsKeyPressed(KEY_ONE))  launchAngle = 0.0f;
+    if (IsKeyPressed(KEY_TWO))  launchAngle = 45.0f;
+    if (IsKeyPressed(KEY_THREE))launchAngle = 60.0f;
+    if (IsKeyPressed(KEY_FOUR)) launchAngle = 90.0f;
+
+    // press SPACE to launch (spawns a new body each time)
+    if (IsKeyPressed(KEY_SPACE)) {
+        SpawnBody(launchPosition, launchAngle, launchSpeed);
+    }
+
+    // update all active bodies with simulation
+    SimulationUpdate(&sim, bodies, MAX_BODIES);
+}
+
+void draw(void)
 {
     BeginDrawing();
-
-    //clear screen and set background color
     ClearBackground(DARKPURPLE);
 
+    DrawText("Hoora Maleki 101579782 - Projectile Lab", 10, 10, 18, BLACK);
 
-    DrawText("Hoora Maleki 101579782", 10, float(GetScreenHeight() - 30), 20, BLACK);
+    // UI: show simulation time
+    DrawText(TextFormat("Sim time: %.2f s", sim.time), GetScreenWidth() - 220, 10, 18, BLACK);
 
-    //time slider and the text
-    GuiSliderBar(Rectangle{ 10, 15, 1000, 20 }, "", TextFormat("%.2f", time), &time, 0, 240);
-    DrawText(TextFormat("T: %6.2f", time), GetScreenWidth() - 140, 10, 30, BLACK);
+    // Sliders: launchPosition, angle, speed
+    DrawText("Launch Position (X):", 10, 50, 14, RAYWHITE);
+    GuiSliderBar(Rectangle { 10, 70, 300, 20 }, "", TextFormat("%.0f", launchPosition.x), & launchPosition.x, 0.0f, (float)GetScreenWidth());
 
-    //set initial launch position Y if not yet set
-    if (launchPosition.y == 0.0f)
-        launchPosition.y = GetScreenHeight() - 200.0f;
+    DrawText("Launch Position (Y):", 10, 100, 14, RAYWHITE);
+    GuiSliderBar(Rectangle { 10, 120, 300, 20 }, "", TextFormat("%.0f", launchPosition.y), & launchPosition.y, 0.0f, (float)GetScreenHeight());
 
-    //sliders for adjusting position, angle, and speed with texts
+    DrawText("Launch Angle (deg):", 10, 150, 14, RAYWHITE);
+    GuiSliderBar(Rectangle { 10, 170, 300, 20 }, "", TextFormat("%.1f", launchAngle), & launchAngle, -180.0f, 180.0f);
 
-    DrawText("Launch Position (X):", 10, 60, 14, RAYWHITE);
-    //GuiSliderBar(Rectangle{ x, y, width, height }, leftText, rightText, &value, minValue, maxValue);
-    GuiSliderBar(Rectangle{ 10, 80, 300, 20 }, "", TextFormat("%.0f", launchPosition.x), &launchPosition.x, 0.0f, (float)GetScreenWidth());
+    DrawText("Launch Speed (px/s):", 10, 200, 14, RAYWHITE);
+    GuiSliderBar(Rectangle { 10, 220, 300, 20 }, "", TextFormat("%.0f", launchSpeed), & launchSpeed, 0.0f, 2000.0f);
 
-    DrawText("Launch Position (Y):", 10, 110, 14, RAYWHITE);
-    GuiSliderBar(Rectangle{ 10, 130, 300, 20 }, "", TextFormat("%.0f", launchPosition.y), &launchPosition.y, 0.0f, (float)GetScreenHeight());
+    // Gravity sliders (allow X & Y)
+    DrawText("Gravity X:", 10, 260, 14, RAYWHITE);
+    GuiSliderBar(Rectangle { 10, 280, 300, 20 }, "", TextFormat("%.1f", sim.gravity.x), & sim.gravity.x, -2000.0f, 2000.0f);
 
-    DrawText("Launch Angle (deg):", 10, 160, 14, RAYWHITE);
-    GuiSliderBar(Rectangle{ 10, 180, 300, 20 }, "", TextFormat("%.1f", launchAngle), &launchAngle, -180.0f, 180.0f);
+    DrawText("Gravity Y:", 10, 310, 14, RAYWHITE);
+    GuiSliderBar(Rectangle { 10, 330, 300, 20 }, "", TextFormat("%.1f", sim.gravity.y), & sim.gravity.y, -2000.0f, 2000.0f);
 
-    DrawText("Launch Speed (px/s):", 10, 210, 14, RAYWHITE);
-    GuiSliderBar(Rectangle{ 10, 230, 300, 20 }, "", TextFormat("%.0f", launchSpeed), &launchSpeed, -500.0f, 2000.0f);
+    DrawText("*** SPACE = launch *** 1/2/3/4 = angles 0/45/60/90 ***", 10, 370, 14, RAYWHITE);
 
-
-    //compute initial velocity vector (angle converted drom degree to radians)
-    Vector2 initialVelocity = { cosf(launchAngle * DEG2RAD) * launchSpeed,
-                               -sinf(launchAngle * DEG2RAD) * launchSpeed };
-
-    //draw velocity vector
-    const float drawScale = 0.5f;
-    Vector2 lineEnd = Vector2Scale(initialVelocity, drawScale);
-    lineEnd = Vector2Add(launchPosition, lineEnd);
-    DrawLineEx(launchPosition, lineEnd, 4.0f, RED);
-
-    // Draw launch point as a pink circle
-    DrawCircleV(launchPosition, 6.0f, PINK);
-
-    // Draw arrowhead for the velocity vector
-    {
-        Vector2 dir = Vector2Subtract(lineEnd, launchPosition);
-        float len = Vector2Length(dir);
-        if (len > 0.0f)
-        {
-            Vector2 nd = Vector2Scale(dir, 1.0f / len); // Normalize vector
-            float ahSize = 12.0f; // Arrowhead size
-            Vector2 left = Vector2Add(lineEnd, Vector2Scale(Vector2Rotate(nd, 150.0f * DEG2RAD), ahSize));
-            Vector2 right = Vector2Add(lineEnd, Vector2Scale(Vector2Rotate(nd, -150.0f * DEG2RAD), ahSize));
-            DrawLineEx(lineEnd, left, 3.0f, RED);
-            DrawLineEx(lineEnd, right, 3.0f, RED);
-        }
+    // Draw all active bodies (projectiles)
+    for (int i = 0; i < MAX_BODIES; ++i) {
+        if (!bodies[i].active) continue;
+        // draw the projectile
+        DrawCircleV(bodies[i].position, 8.0f, bodies[i].color);
     }
+
+    // Draw launch direction vector from launchPosition (visual aid)
+    Vector2 initVel = { cosf(launchAngle * DEG2RAD) * launchSpeed, -sinf(launchAngle * DEG2RAD) * launchSpeed };
+    Vector2 lineEnd = Vector2Add(launchPosition, Vector2Scale(initVel, 0.05f));
+    DrawLineEx(launchPosition, lineEnd, 4.0f, RED);
+    DrawCircleV(launchPosition, 6.0f, PINK);
 
     EndDrawing();
 }
 
-
-int main()
+int main(void)
 {
-    //create window with given width/height from game.h
-    InitWindow(InitialWidth, InitialHeight, "GAME2005 Hoora Maleki 101579782");
-    SetTargetFPS(TARGET_FPS);
+    InitWindow(InitialWidth, InitialHeight, "Projectile Simulation - Physics Lab");
+    SetTargetFPS(60);
 
-    //initialize launch position relative to screen size
-    launchPosition = { 200.0f, GetScreenHeight() - 200.0f };
+    // initialize simulation
+    sim.deltaTime = 0.0f;
+    sim.time = 0.0f;
+    sim.gravity = (Vector2{ 0.0f, 980.0f }); // default gravity ~ 980 px/s^2 (pixels ~ cm analogy)
 
-    //main game loop
-    while (!WindowShouldClose()) //runs until user closes the window
-    {
-        update(); //update world state
-        draw();   //render to screen
+    // initialize launch position
+    launchPosition = (Vector2{ 200.0f, GetScreenHeight() - 200.0f });
+    // initialize bodies array
+    ClearAllBodies();
+
+    // start with no active bodies
+    while (!WindowShouldClose()) {
+        update();
+        draw();
     }
 
-    //cleanup and exit
     CloseWindow();
     return 0;
 }
