@@ -18,6 +18,7 @@
     <ClInclude Include="include\raygui.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Simulation.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cpp">
