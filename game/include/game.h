@@ -23,5 +23,5 @@ Use this as a starting point or replace it with your code.
 */
 
 
-static constexpr int InitialWidth = 1200;
-static constexpr int InitialHeight = 800;
+static constexpr int InitialWidth = 1600;
+static constexpr int InitialHeight = 1000;

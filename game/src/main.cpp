@@ -1,4 +1,4 @@
-//Lab 3
+//Lab 4
 
 #include "raylib.h"
 #include "raymath.h"
@@ -12,10 +12,20 @@
 float dt = 1.0f / 60; //fixed timestep
 float time = 0.0f;  
 
+//******
+//new shape type for HalfSpace collision object
+enum physicsShapes
+{
+    circle,
+	half_Space
+};
+
+
 //base physics object
 class physicsObject
 {
 public:
+	bool isStatic = false;
     Vector2 position = { 0,0 };
     Vector2 velocity = { 0,0 };
     float mass = 1;  //kg
@@ -23,6 +33,8 @@ public:
     Color color = GREEN;
 
     virtual void draw() { DrawText(name.c_str(), position.x, position.y, 10, LIGHTGRAY); } //draw label
+
+    virtual physicsShapes Shape() = 0;  //abstract func. must be defined in child classes
 };
 
 
@@ -37,7 +49,85 @@ public:
         DrawCircle(position.x, position.y, radius, color);
         DrawText(name.c_str(), position.x, position.y, 10, LIGHTGRAY);
     }
+
+    virtual physicsShapes Shape() override
+    {
+		return circle;
+    }
 };
+
+//******
+//new physics object representing halfspace
+//which is static and defined by a position point and a surface normal
+class physicsHalfSpace : public physicsObject
+{
+private:
+
+    float rotation = 0;
+    Vector2 normal = { 0, -1 };
+
+
+public:
+
+	//rotation of the halfspace in degrees
+    void setRotationDegrees(float rotationInDegrees)
+    {
+		rotation = rotationInDegrees;
+		normal = Vector2Rotate({ 0, -1 }, rotation * DEG2RAD);
+	}
+    float getRotation()
+    {
+		return rotation;
+    }
+
+    Vector2 getNormal()
+    {
+        return normal;
+	}
+
+    void draw() override
+    {
+        DrawCircle(position.x, position.y, 8, color);
+
+		DrawLineEx(position, position + normal * 30, 1, color);
+    
+		Vector2 parallelToSurface = Vector2Rotate(normal, PI * 0.5f);
+		DrawLineEx(position - parallelToSurface * 4000, position + parallelToSurface * 4000, 1, color);
+    }
+
+    virtual physicsShapes Shape() override
+    {
+        return half_Space;
+    }
+
+};
+
+//******
+//detects overlap between a circle and a half-space
+bool circleHalfSpaceOverlap(physicsObjectCircle* circle, physicsHalfSpace* halfSpace)
+{
+
+    Vector2 normal = halfSpace->getNormal();
+    Vector2 pointOnPlane = halfSpace->position;
+
+    //compute the signed distance from circle center to the plane
+    float signedDistance = Vector2DotProduct(circle->position - pointOnPlane, normal);
+
+    //draw debug line showing distance to the plane
+    DrawLineEx(circle->position, pointOnPlane, 1, GRAY);
+    DrawText(TextFormat("d: %.2f", signedDistance), circle->position.x + 20, circle->position.y, 12, GRAY);
+
+    //check overlap
+    //if circle crosses or touches the plane
+    bool overlap = signedDistance < circle->radius;
+
+    if (overlap)
+        circle->color = RED;
+
+    return overlap;
+}
+
+
 
 //world to manage physics objects
 class physicsWorld
@@ -60,8 +150,13 @@ public:
     {
         for (int i = 0; i < objects.size(); i++)
         {
-            objects[i]->position = objects[i]->position + objects[i]->velocity * dt; //move
-            objects[i]->velocity = objects[i]->velocity + accelerationGravity * dt;   //apply gravity
+            // Skip static objects (e.g., halfspaces)
+            if (objects[i]->isStatic)
+                continue;
+
+            // Apply motion and gravity
+            objects[i]->position = objects[i]->position + objects[i]->velocity * dt;
+            objects[i]->velocity = objects[i]->velocity + accelerationGravity * dt;
         }
     }
 
@@ -78,6 +173,10 @@ public:
                 physicsObjectCircle* circleA = (physicsObjectCircle*)objects[i];
                 physicsObjectCircle* circleB = (physicsObjectCircle*)objects[j];
 
+                //ask obj what shape they are
+                physicsShapes shapeA = circleA->Shape();
+				physicsShapes shapeB = circleB->Shape();
+
                 float sumRadius = circleA->radius + circleB->radius;
                 Vector2 displacement = circleA->position - circleB->position;
                 float distance = Vector2Length(displacement);
@@ -87,6 +186,19 @@ public:
                     circleA->color = RED;
                     circleB->color = RED;
                 }
+
+                //******
+                //if one is circle and one is half space
+                else if (shapeA == circle && shapeB == half_Space)
+                {
+                    circleHalfSpaceOverlap((physicsObjectCircle*)circleA, (physicsHalfSpace*)circleB);
+                }
+                else if (shapeA == half_Space && shapeB == circle)
+                {
+                    circleHalfSpaceOverlap((physicsObjectCircle*)circleB, (physicsHalfSpace*)circleA);
+                }
+				
+                
             }
         }
     }
@@ -99,6 +211,8 @@ float spawnX = 100;
 float spawnY = 100;
 
 physicsWorld world;
+physicsHalfSpace halfSpace;
+float haldspaceAngle = 0;
 
 //remove objects offscreen
 void cleanup()
@@ -171,7 +285,17 @@ void draw()
     DrawText("Gravity (Y):", 10, 280, 14, RAYWHITE);
     GuiSliderBar(Rectangle{ 120, 280, 300, 20 }, "", TextFormat("%.1f", world.accelerationGravity.y), &world.accelerationGravity.y, -180.0f, 180.0f);
 
-    DrawText("*** SPACE = launch *** press 1 for 0 degrees, 2 for 45, 3 for 60, 4 for 90", 10, 370, 14, RAYWHITE);
+    //********
+	//half space
+    //GUI sliders for adjusting half-space position and rotation
+    GuiSliderBar(Rectangle{ 120, 340, 250, 20 }, "halfSpace x", TextFormat("%.0f", halfSpace.position.x), &halfSpace.position.x, 0.0f, (float)GetScreenWidth());
+    GuiSliderBar(Rectangle{ 120, 400, 250, 20 }, "halfSpace Y", TextFormat("%.0f", halfSpace.position.y), &halfSpace.position.y, 0.0f, (float)GetScreenWidth());
+
+	float halfspaceRotation = halfSpace.getRotation();
+    GuiSliderBar(Rectangle{ 120, 460, 250, 20 }, "Rotation", TextFormat("%.0f", halfSpace.getRotation()), &halfspaceRotation, 0.0f, (float)GetScreenWidth());
+	halfSpace.setRotationDegrees(halfspaceRotation);
+
+    DrawText("*** SPACE = launch *** press 1 for 0 degrees, 2 for 45, 3 for 60, 4 for 90", 10, 500, 14, RAYWHITE);
 
     //draw launch line
     Vector2 startPos = { spawnX, GetScreenHeight() - spawnY };
@@ -182,6 +306,7 @@ void draw()
     for (int i = 0; i < world.objects.size(); i++)
         world.objects[i]->draw();
 
+
     EndDrawing();
 }
 
@@ -191,180 +316,11 @@ int main()
     InitWindow(InitialWidth, InitialHeight, "Physics Lab");
     SetTargetFPS(60);
 
-    while (!WindowShouldClose()) {
-        update();
-        draw();
-    }
-
-    CloseWindow();
-    return 0;
-}
-
-/*
-//holds body data: position, velocity, drag (not used), mass (not used), active flag, and color
-typedef struct PhysicsBody
-{
-    Vector2 position;
-    Vector2 velocity;
-    float drag; // stored (not applied in this lab)
-    float mass; // stored (not used here)
-    bool active;
-    Color color;
-}
-PhysicsBody;
-
-
-//holds deltaTime, time, and gravity (a Vector2), which apply to all bodies
-typedef struct PhysicsSimulation
-{
-    float deltaTime;
-    float time;
-    Vector2 gravity; //gravity direction (on x,y) & magnitude (px/s^2)
-}
-PhysicsSimulation;
-
-
-//stores multiple projectiles so we can spawn several simultaneously
-//use FindFreeBodySlot() to locate an inactive slot for each new spawn.
-PhysicsBody bodies[MAX_BODIES];
-PhysicsSimulation sim;
-
-Vector2 launchPosition = { 200.0f, 0.0f };
-float launchSpeed = 400.0f;   // px/s (tweakable)
-float launchAngle = 30.0f;    // degrees
-
-
-//find a free body slot
-int FindFreeBodySlot()
-{
-    //returns the index of the first body whose active flag is false (or -1 if full)
-    for (int i = 0; i < MAX_BODIES; ++i) if (!bodies[i].active) return i; 
-    return -1;
-}
-
-
-//spawn a new body at launchPosition with initial velocity from angle & speed
-void SpawnBody(Vector2 pos, float angleDeg, float speed) 
-{
-    int idx = FindFreeBodySlot();
-    if (idx < 0) return; // no free slot
-    PhysicsBody* b = &bodies[idx];
-    b->position = pos;
-    float rad = angleDeg * DEG2RAD;
-    b->velocity = (Vector2{ cosf(rad) * speed, -sinf(rad) * speed });
-    b->drag = 0.0f;    //store drag (not used yet)
-    b->mass = 1.0f;    //default mass (not used yet)
-    b->active = true;
-    b->color = RED;
-}
-
-
-//simulation update: applies gravity * deltaTime to velocity, integrates position
-void SimulationUpdate(PhysicsSimulation* s, PhysicsBody* bodyArray, int count) 
-{
-    //use s->deltaTime already set by caller
-    for (int i = 0; i < count; ++i)
-    {
-        PhysicsBody* b = &bodyArray[i];
-        if (!b->active) continue;
-
-        // apply gravity to velocity (accel * dt)
-        b->velocity.x += s->gravity.x * s->deltaTime;
-        b->velocity.y += s->gravity.y * s->deltaTime;
-
-        // integrate position
-        b->position.x += b->velocity.x * s->deltaTime;
-        b->position.y += b->velocity.y * s->deltaTime;
-    }
-}
-
-
-
-void update()
-{
-    //get real delta time each frame
-    sim.deltaTime = GetFrameTime();
-    sim.time += sim.deltaTime;
-
-    //quick-angle presets for demonstration
-    if (IsKeyPressed(KEY_ONE))  launchAngle = 0.0f;
-    if (IsKeyPressed(KEY_TWO))  launchAngle = 45.0f;
-    if (IsKeyPressed(KEY_THREE))launchAngle = 60.0f;
-    if (IsKeyPressed(KEY_FOUR)) launchAngle = 90.0f;
-
-    //press SPACE to spawn
-    if (IsKeyPressed(KEY_SPACE)) {
-        SpawnBody(launchPosition, launchAngle, launchSpeed);
-    }
-
-    //update all active bodies with simulation
-    SimulationUpdate(&sim, bodies, MAX_BODIES);
-}
-
-void draw()
-{
-    BeginDrawing();
-    ClearBackground(DARKPURPLE);
-
-    DrawText("Hoora Maleki 101579782 - Projectile Lab", 10, 10, 18, BLACK);
-
-    //show time
-    DrawText(TextFormat("Sim time: %.2f s", sim.time), GetScreenWidth() - 220, 10, 18, BLACK);
-
-    //sliders: launchPosition, angle, speed, gravity
-    DrawText("Launch Position (X):", 10, 50, 14, RAYWHITE);
-    GuiSliderBar(Rectangle { 10, 70, 300, 20 }, "", TextFormat("%.0f", launchPosition.x), & launchPosition.x, 0.0f, (float)GetScreenWidth());
-
-    DrawText("Launch Position (Y):", 10, 100, 14, RAYWHITE);
-    GuiSliderBar(Rectangle { 10, 120, 300, 20 }, "", TextFormat("%.0f", launchPosition.y), & launchPosition.y, 0.0f, (float)GetScreenHeight());
-
-
-    DrawText("Launch Angle (deg):", 10, 150, 14, RAYWHITE);
-    GuiSliderBar(Rectangle { 10, 170, 300, 20 }, "", TextFormat("%.1f", launchAngle), & launchAngle, -180.0f, 180.0f);
-
-
-    DrawText("Launch Speed (px/s):", 10, 200, 14, RAYWHITE);
-    GuiSliderBar(Rectangle { 10, 220, 300, 20 }, "", TextFormat("%.0f", launchSpeed), & launchSpeed, 0.0f, 2000.0f);
-
-    
-    DrawText("Gravity X:", 10, 260, 14, RAYWHITE);
-    GuiSliderBar(Rectangle { 10, 280, 300, 20 }, "", TextFormat("%.1f", sim.gravity.x), & sim.gravity.x, -2000.0f, 2000.0f);
-
-    DrawText("Gravity Y:", 10, 310, 14, RAYWHITE);
-    GuiSliderBar(Rectangle { 10, 330, 300, 20 }, "", TextFormat("%.1f", sim.gravity.y), & sim.gravity.y, -2000.0f, 2000.0f);
-
-
-    DrawText("*** SPACE = launch *** 1/2/3/4 = angles 0/45/60/90 ***", 10, 370, 14, RAYWHITE);
-
-    // Draw all active bodies (projectiles)
-    for (int i = 0; i < MAX_BODIES; ++i) 
-    {
-        if (!bodies[i].active) continue;
-        // draw the projectile
-        DrawCircleV(bodies[i].position, 8.0f, bodies[i].color);
-    }
-
-    //draw launch direction vector from launchPosition (visual aid)
-    Vector2 initVel = { cosf(launchAngle * DEG2RAD) * launchSpeed, -sinf(launchAngle * DEG2RAD) * launchSpeed };
-    Vector2 lineEnd = Vector2Add(launchPosition, Vector2Scale(initVel, 0.5f));
-    DrawLineEx(launchPosition, lineEnd, 4.0f, RED);
-    DrawCircleV(launchPosition, 6.0f, PINK);
-
-    EndDrawing();
-}
-
-int main()
-{
-    InitWindow(InitialWidth, InitialHeight, "Projectile Simulation - Physics Lab");
-    SetTargetFPS(60);
-
-    //initialize simulation
-    sim.deltaTime = 0.0f;
-    sim.time = 0.0f;
-    sim.gravity = (Vector2{ 0.0f, 980.0f }); // default gravity ~ 980 px/s^2 (pixels ~ cm analogy)
-
-    //initialize launch position
-    launchPosition = (Vector2{ 200.0f, GetScreenHeight() - 200.0f });
+    //***********
+    //create and add a static halfspace object
+	halfSpace.isStatic = true;
+	halfSpace.position = { 500, 700 };
+	world.add(&halfSpace);
 
     while (!WindowShouldClose()) {
         update();
@@ -374,5 +330,4 @@ int main()
     CloseWindow();
     return 0;
 }
-*/
 
