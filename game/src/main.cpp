@@ -1,4 +1,4 @@
-//Lab 4
+//Lab 5
 
 #include "raylib.h"
 #include "raymath.h"
@@ -12,7 +12,7 @@
 float dt = 1.0f / 60; //fixed timestep
 float time = 0.0f;  
 
-//******
+
 //new shape type for HalfSpace collision object
 enum physicsShapes
 {
@@ -56,7 +56,6 @@ public:
     }
 };
 
-//******
 //new physics object representing halfspace
 //which is static and defined by a position point and a surface normal
 class physicsHalfSpace : public physicsObject
@@ -102,7 +101,7 @@ public:
 
 };
 
-//******
+//######
 //detects overlap between a circle and a half-space
 bool circleHalfSpaceOverlap(physicsObjectCircle* circle, physicsHalfSpace* halfSpace)
 {
@@ -111,20 +110,39 @@ bool circleHalfSpaceOverlap(physicsObjectCircle* circle, physicsHalfSpace* halfS
     Vector2 pointOnPlane = halfSpace->position;
 
     //compute the signed distance from circle center to the plane
-    float signedDistance = Vector2DotProduct(circle->position - pointOnPlane, normal);
+    Vector2 signedDistance = circle->position - pointOnPlane;
+    //#####
+    //distance from the circle center to the plane
+	float dot = Vector2DotProduct(signedDistance, normal);
+    //this is the vector pointing from the plane toward the circle center
+	Vector2 ProjectionDisplacementOnToNormal = normal * dot;
 
     //draw debug line showing distance to the plane
     DrawLineEx(circle->position, pointOnPlane, 1, GRAY);
     DrawText(TextFormat("d: %.2f", signedDistance), circle->position.x + 20, circle->position.y, 12, GRAY);
 
+    //####
     //check overlap
-    //if circle crosses or touches the plane
-    bool overlap = signedDistance < circle->radius;
-
-    if (overlap)
-        circle->color = RED;
-
-    return overlap;
+    //check how much circle crosses into the plane
+    float overlap = circle->radius - dot;
+	
+    if (overlap > 0)
+    {
+        //i dont know if we still need them to turn red touching the half-space
+        //circle->color = RED;
+        
+        //compute the Minimum Translation Vector (MTV)
+		//tells us how much to move the circle out of the half-space
+		//mtv = insertion depth
+		Vector2 mtv = normal * overlap; 
+		circle->position += mtv; //move circle out of half-space
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+    //return dot < circle->radius;
 }
 
 
@@ -170,32 +188,55 @@ public:
         {
             for (int j = i + 1; j < objects.size(); j++)
             {
-                physicsObjectCircle* circleA = (physicsObjectCircle*)objects[i];
-                physicsObjectCircle* circleB = (physicsObjectCircle*)objects[j];
+                physicsObject* objA = objects[i];
+                physicsObject* objB = objects[j];
 
                 //ask obj what shape they are
-                physicsShapes shapeA = circleA->Shape();
-				physicsShapes shapeB = circleB->Shape();
+                physicsShapes shapeA = objA->Shape();
+                physicsShapes shapeB = objB->Shape();
 
-                float sumRadius = circleA->radius + circleB->radius;
-                Vector2 displacement = circleA->position - circleB->position;
-                float distance = Vector2Length(displacement);
-
-                if (distance < sumRadius) //overlap
+                //#########
+                //check if both objects are circles
+                //because my last code, the spawned circles when
+				//collide with halfspace's circle, pushed it downwards
+                if (shapeA == circle && shapeA == circle)
                 {
-                    circleA->color = RED;
-                    circleB->color = RED;
-                }
+                    //turn these physics objects into circle objects to access their data
+                    physicsObjectCircle* circleA = (physicsObjectCircle*)objA;
+                    physicsObjectCircle* circleB = (physicsObjectCircle*)objB;
 
-                //******
+
+                    Vector2 displacement = circleB->position - circleA->position;
+                    float sumRadius = circleA->radius + circleB->radius;
+                    float distance = Vector2Length(displacement);
+
+                    //#######
+					//calculate overlap
+                    float overlap = sumRadius - distance;
+                    
+                    if (overlap > 0)
+                    {
+                        Vector2 normalAtoB = displacement / distance;
+                        Vector2 mtv = normalAtoB * overlap;
+
+                        //only move non-static objects (not planes)
+                        if (!circleA->isStatic)
+                            circleA->position -= mtv * 0.5f; //move A half the overlap distance
+                        if (!circleB->isStatic)
+                            circleB->position += mtv * 0.5f; //move B the other half
+                    
+                        circleA->color = RED;
+                        circleB->color = RED;
+                    }
+                }
                 //if one is circle and one is half space
                 else if (shapeA == circle && shapeB == half_Space)
                 {
-                    circleHalfSpaceOverlap((physicsObjectCircle*)circleA, (physicsHalfSpace*)circleB);
+                    circleHalfSpaceOverlap((physicsObjectCircle*)objA, (physicsHalfSpace*)objB);
                 }
                 else if (shapeA == half_Space && shapeB == circle)
                 {
-                    circleHalfSpaceOverlap((physicsObjectCircle*)circleB, (physicsHalfSpace*)circleA);
+                    circleHalfSpaceOverlap((physicsObjectCircle*)objB, (physicsHalfSpace*)objA);
                 }
 				
                 
@@ -208,10 +249,11 @@ public:
 float speed = 100;
 float angle = 0;
 float spawnX = 100;
-float spawnY = 100;
+float spawnY = 300;
 
 physicsWorld world;
 physicsHalfSpace halfSpace;
+physicsHalfSpace halfSpace2; //##### to represent a bowl shape
 float haldspaceAngle = 0;
 
 //remove objects offscreen
@@ -267,8 +309,9 @@ void draw()
 {
     BeginDrawing();
     ClearBackground(DARKPURPLE);
-    DrawText("Hoora Maleki 101579782 - physics Lab 3", 10, 10, 18, BLACK);
+    DrawText("Hoora Maleki 101579782 - physics Lab 5", 10, 10, 18, BLACK);
 
+    //spawn line
     //spawn, speed, angle, gravity adjustment sliders
     DrawText("Spawn X:", 10, 40, 14, RAYWHITE);
     GuiSliderBar(Rectangle{ 120, 40, 300, 20 }, "", TextFormat("%.0f", spawnX), &spawnX, 0.0f, (float)GetScreenWidth());
@@ -285,7 +328,6 @@ void draw()
     DrawText("Gravity (Y):", 10, 280, 14, RAYWHITE);
     GuiSliderBar(Rectangle{ 120, 280, 300, 20 }, "", TextFormat("%.1f", world.accelerationGravity.y), &world.accelerationGravity.y, -180.0f, 180.0f);
 
-    //********
 	//half space
     //GUI sliders for adjusting half-space position and rotation
     GuiSliderBar(Rectangle{ 120, 340, 250, 20 }, "halfSpace x", TextFormat("%.0f", halfSpace.position.x), &halfSpace.position.x, 0.0f, (float)GetScreenWidth());
@@ -316,11 +358,17 @@ int main()
     InitWindow(InitialWidth, InitialHeight, "Physics Lab");
     SetTargetFPS(60);
 
-    //***********
     //create and add a static halfspace object
 	halfSpace.isStatic = true;
-	halfSpace.position = { 500, 700 };
+	halfSpace.position = { 600, 900 };
+	halfSpace.setRotationDegrees(20);
 	world.add(&halfSpace);
+    //#####
+	//added a new static halfspace to represent a bowl shape
+    halfSpace2.isStatic = true;
+	halfSpace2.position = { 900, 900 };
+	halfSpace2.setRotationDegrees(-20);
+	world.add(&halfSpace2);
 
     while (!WindowShouldClose()) {
         update();
