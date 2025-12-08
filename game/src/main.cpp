@@ -1,4 +1,4 @@
-﻿//Lab 6
+﻿//Lab 7
 
 #include "raylib.h"
 #include "raymath.h"
@@ -12,6 +12,8 @@
 float dt = 1.0f / 60; //fixed timestep
 float time = 0.0f;  
 float coefficientOfFriction = 0.5f;
+float restitution = 0.9f; //@@@@@@@@@@@@@ 
+float weight = 1.0f; //@@@@@@@@@@@@@
 
 
 //new shape type for HalfSpace collision object
@@ -32,6 +34,7 @@ public:
     float mass = 1;  //kg
 	Vector2 netForce = { 0,0 }; //N
     float grippinesss = 0.5f;
+	float bounciness = 0.9f; //@@@@@ for determining coefficient of restitution
     std::string name = "object";
     Color color = GREEN;
     Color defaultColor = GREEN;
@@ -131,7 +134,7 @@ public:
         objecetCount++;
     }
 
-    //%%%%%%%%%%%%%%%
+
     //reset all forces on every object before calculating new forces, aach update, we start with netForce = 0
     void ResetNetForces()
     {
@@ -183,17 +186,16 @@ public:
             obj->velocity = obj->velocity + acceleration * dt;
 
 			//DrawLineEx(obj->position, obj->position + obj->netForce, 2, PURPLE); //draw acceleration vector
-            //%%%%%%%%%%%%%%%
         }
 
     }
 
     void update()
     {
-		ResetNetForces(); //%%%%%%%%%%%%%%
-		addGravityForce(); //%%%%%%%%%%%%%%
-		checkCollision(); //%%%%%%%%%%%%%
-		applyKinematics(); //%%%%%%%%%%%%% i moved the previous logic into apply kinematics
+		ResetNetForces(); 
+		addGravityForce();
+		checkCollision(); 
+		applyKinematics(); //i moved the previous logic into apply kinematics
     }
 
     void checkCollision()
@@ -219,7 +221,7 @@ public:
                 //check if both objects are circles
                 //because my last code, the spawned circles when
 				//collide with halfspace's circle, pushed it downwards
-                if (shapeA == circle && shapeA == circle)
+                if (shapeA == circle && shapeB == circle)
                 {
                     //turn these physics objects into circle objects to access their data
                     physicsObjectCircle* circleA = (physicsObjectCircle*)objA;
@@ -247,6 +249,37 @@ public:
                     
                         circleA->color = RED;
                         circleB->color = RED;
+
+                        //@@@@@@@@@@@@@@@@@@@
+                        //from perspective of A
+                        //circle-circle collision response
+
+                        //this tells us how fast B is moving toward or away from A
+                        Vector2 velocityBRelativeToA = circleB->velocity - circleA->velocity;
+                        //this gives the 1D closing speed between the two bodies
+						float closingVelocity1D = Vector2DotProduct(velocityBRelativeToA, normalAtoB);
+
+                        //if dot is negative then they are colliding, if positive then they are not colliding
+                        if (closingVelocity1D >= 0) return;
+                        //combined bounciness
+						float restitution = circleA->bounciness * circleB->bounciness ; 
+                        //total mass
+						float totalMass = circleA->mass + circleB->mass;
+
+						float impulseMagnitude = ((1.0f + restitution) * closingVelocity1D * circleA->mass * circleB->mass) / totalMass;
+
+                        //A--> <-B
+                        //A gets pushed opposite the normal, B gets pushed along the normal
+						Vector2 impulseB = normalAtoB * -impulseMagnitude;
+						Vector2 impulseA = normalAtoB * impulseMagnitude;
+
+
+						//apply impulse to velocities
+                        //this adjusts each circle velocity based on how large the impulse was
+						circleA->velocity += impulseA / circleA->mass;
+						circleB->velocity += impulseB / circleB->mass;
+
+                        //@@@@@@@@@@@@@@@@@@@
                     }
                 }
                 //if one is circle and one is half space
@@ -266,8 +299,8 @@ public:
 };
 
 
-float speed = 0;
-float angle = 0;
+float speed = 40;
+float angle = 10;
 float spawnX = 100;
 float spawnY = 300;
 
@@ -313,7 +346,7 @@ bool circleHalfSpaceOverlap(physicsObjectCircle* circle, physicsHalfSpace* halfS
 		circle->position += mtv; //move circle out of half-space
 
 
-        //%%%%%%%%%%%%%%%%%%%
+        
         //compute gravity force on this circle:  F = m * g
         Vector2 Fgravity = world.accelerationGravity * circle->mass;
         DrawLineEx(circle->position, circle->position + Fgravity, 2, PURPLE);   // render gravity
@@ -345,8 +378,29 @@ bool circleHalfSpaceOverlap(physicsObjectCircle* circle, physicsHalfSpace* halfS
         //this will store the final friction vector
         Vector2 Ffriction = { 0, 0 };
 
+        //@@@@@@@@@@@@@@@@@@@
+        //bouncing
+        //from perspective of A
+		//collision response of circle and half-space
+
+        //project the circle velocity into the collision normal
+		//this gives the circle moving into or away from the half-space
+        float closingVelocity1D = Vector2DotProduct(circle->velocity, n);
+
+        //if dot is negative then we are colliding, if positive then we are not colliding
+        if (closingVelocity1D >= 0) return true;
+
+        //the restitution is calculated by each of the objects bounciness
+		float restitution = circle->bounciness * halfSpace->bounciness;
         
-        //case1 : here obj is sliding
+        //this flips the normal component of velocity and scales it by restitution
+		//velFinal = velInitial + -(1 + restitution * velInitial)
+		circle->velocity += n * closingVelocity1D * -(1.0f + restitution);
+
+		//@@@@@@@@@@@@@@@@@@@
+        
+
+        //case1
         if (velParallelLen > 0.001f)
         {
             //kinetic friction : friction always opposes motion
@@ -354,7 +408,7 @@ bool circleHalfSpaceOverlap(physicsObjectCircle* circle, physicsHalfSpace* halfS
             Ffriction = Vector2Scale(frictionDirection, frictionMagnitude);
         }
 
-        //case2 : if obj is not sliding
+        //case2
         else
         {
             //object is either not moving or about to start sliding
@@ -386,7 +440,7 @@ bool circleHalfSpaceOverlap(physicsObjectCircle* circle, physicsHalfSpace* halfS
         if (!(Ffriction.x == 0 && Ffriction.y == 0))
             DrawLineEx(circle->position, circle->position + Ffriction, 2, ORANGE); //render friction
 
-        //%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 
 
         return true;
@@ -424,7 +478,6 @@ void update()
     cleanup();
     world.update();
 
-    /*
     if (IsKeyPressed(KEY_SPACE)) //spawn circle
     {
         physicsObjectCircle* newBird = new physicsObjectCircle();
@@ -433,14 +486,13 @@ void update()
                               -speed * (float)sin(angle * DEG2RAD) };
         newBird->radius = 15;
         newBird->color = GREEN;
-        
+		newBird->bounciness = restitution; //@@@@@@@@@@@@@@@@
+        newBird->mass = weight; //@@@@@@@@@@@@@@@@
 
         world.add(newBird);
     }
-    */
 
-
-    //%%%%%%%%%%%%%%%%%%%%%%%%%
+    /*
     //spawn spheres
     if (IsKeyPressed(KEY_Q)) //red: 2kg, 0.1
     {
@@ -490,7 +542,7 @@ void update()
         s->grippinesss = 0.8f;
         world.add(s);
     }
-
+    */
 
     //sample angles
     if (IsKeyPressed(KEY_ONE))   angle = 0.0f;
@@ -514,45 +566,134 @@ void draw()
     DrawText("Spawn X:", 10, 40, 14, RAYWHITE);
     GuiSliderBar(Rectangle{ 120, 40, 300, 20 }, "", TextFormat("%.0f", spawnX), &spawnX, 0.0f, (float)GetScreenWidth());
 
-    DrawText("Spawn Y:", 10, 100, 14, RAYWHITE);
-    GuiSliderBar(Rectangle{ 120, 100, 300, 20 }, "", TextFormat("%.0f", spawnY), &spawnY, 0.0f, (float)GetScreenHeight());
+    DrawText("Spawn Y:", 10, 60, 14, RAYWHITE);
+    GuiSliderBar(Rectangle{ 120, 60, 300, 20 }, "", TextFormat("%.0f", spawnY), &spawnY, 0.0f, (float)GetScreenHeight());
 
-    DrawText("Speed:", 10, 160, 14, RAYWHITE);
-    GuiSliderBar(Rectangle{ 120, 160, 300, 20 }, "", TextFormat("%.0f", speed), &speed, 0.0f, (float)GetScreenWidth());
+    DrawText("Speed:", 10, 80, 14, RAYWHITE);
+    GuiSliderBar(Rectangle{ 120, 80, 300, 20 }, "", TextFormat("%.0f", speed), &speed, 0.0f, (float)GetScreenWidth());
 
-    DrawText("Angle:", 10, 220, 14, RAYWHITE);
-    GuiSliderBar(Rectangle{ 120, 220, 300, 20 }, "", TextFormat("%.0f°", angle), &angle, 0.0f, 180.0f);
+    DrawText("Angle:", 10, 100, 14, RAYWHITE);
+    GuiSliderBar(Rectangle{ 120, 100, 300, 20 }, "", TextFormat("%.0f°", angle), &angle, 0.0f, 180.0f);
 
-    DrawText("Gravity (Y):", 10, 280, 14, RAYWHITE);
-    GuiSliderBar(Rectangle{ 120, 280, 300, 20 }, "", TextFormat("%.1f", world.accelerationGravity.y), &world.accelerationGravity.y, -180.0f, 180.0f);
+    DrawText("Gravity (Y):", 10, 120, 14, RAYWHITE);
+    GuiSliderBar(Rectangle{ 120, 120, 300, 20 }, "", TextFormat("%.1f", world.accelerationGravity.y), &world.accelerationGravity.y, -180.0f, 180.0f);
 
 	//half space
     //GUI sliders for adjusting half-space position and rotation
-    GuiSliderBar(Rectangle{ 120, 340, 250, 20 }, "halfSpace x", TextFormat("%.0f", halfSpace.position.x), &halfSpace.position.x, 0.0f, (float)GetScreenWidth());
-    GuiSliderBar(Rectangle{ 120, 400, 250, 20 }, "halfSpace Y", TextFormat("%.0f", halfSpace.position.y), &halfSpace.position.y, 0.0f, (float)GetScreenWidth());
+    DrawText("HalfSpace (X):", 10, 160, 14, RAYWHITE);
+    GuiSliderBar(Rectangle{ 120, 160, 250, 20 }, "", TextFormat("%.0f", halfSpace.position.x), &halfSpace.position.x, 0.0f, (float)GetScreenWidth());
+    DrawText("HalfSpace (y):", 10, 180, 14, RAYWHITE);
+    GuiSliderBar(Rectangle{ 120, 180, 250, 20 }, "", TextFormat("%.0f", halfSpace.position.y), &halfSpace.position.y, 0.0f, (float)GetScreenWidth());
 
 	float halfspaceRotation = halfSpace.getRotation();
-    GuiSliderBar(Rectangle{ 120, 460, 250, 20 }, "Rotation", TextFormat("%.0f", halfSpace.getRotation()), &halfspaceRotation, 0.0f, (float)GetScreenWidth());
-	halfSpace.setRotationDegrees(halfspaceRotation);
+    DrawText("Rotation:", 10, 200, 14, RAYWHITE);
+    GuiSliderBar(Rectangle{ 120, 200, 250, 20 }, "", TextFormat("%.0f", halfSpace.getRotation()), &halfspaceRotation, 0.0f, (float)GetScreenWidth());
 
-    DrawText("*** SPACE = launch *** press 1 for 0 degrees, 2 for 45, 3 for 60, 4 for 90", 10, 500, 14, RAYWHITE);
+    //@@@@@@@@@@@@@@@@@@@@@@@@@@
+	//control restitution 
+    DrawText("Restitution:", 10, 240, 14, RAYWHITE);
+	GuiSliderBar(Rectangle{ 120, 240, 250, 20 }, "", TextFormat("%.2f", restitution), &restitution, 0.0f, 1.0f);
+
+	//mass adjusting slider
+    DrawText("Mass:", 10, 280, 14, RAYWHITE);
+    GuiSliderBar(Rectangle{ 120, 280, 300, 20 }, "", TextFormat("%.1f", weight), &weight, 0.1f, 20.0f);
+    //@@@@@@@@@@@@@@@@@@@@@
+
+    DrawText("*** SPACE = launch *** press 1 for 0 degrees, 2 for 45, 3 for 60, 4 for 90", 10, 310, 14, RAYWHITE);
+
+
+    //@@@@@@@@@@@@@@@@@@@@@@@
+	//reset world button
+
+    if (GuiButton(Rectangle{ 1300, 40, 120, 30 }, "Reset World"))
+    {
+        for (int i = world.objects.size() - 1; i >= 0; i--)
+        {
+            if (!world.objects[i]->isStatic)
+            {
+                delete world.objects[i];
+                world.objects.erase(world.objects.begin() + i);
+            }
+        }
+    }
+
+    //bouncy balls
+    //restitution = 1.0, friction low, mass small
+    if (GuiButton(Rectangle{ 1300, 70, 120, 30 }, "Bouncy"))
+    {
+        restitution = 1.0f;
+        coefficientOfFriction = 0.1f;
+        weight = 1.0f;
+    }
+
+    //pool table
+    //friction high, restitution around 0.3, mass medium
+    if (GuiButton(Rectangle{ 1300, 100, 120, 30 }, "Pool Table"))
+    {
+        restitution = 0.3f;
+        coefficientOfFriction = 0.8f;
+        weight = 5.0f;
+
+        //adding the stationary ball
+        physicsObjectCircle* target = new physicsObjectCircle();
+
+        target->position = { spawnX + 200, (float)GetScreenHeight() - spawnY + 85};
+        target->velocity = { 0, 0 };    //stationary
+        target->radius = 15;
+        target->mass = weight;
+        target->bounciness = restitution;
+        target->color = BLUE;
+        target->defaultColor = BLUE;
+
+        world.add(target);
+    }
+
+    //galilean Cannon
+    //heavy ball + light ball with different masses
+    if (GuiButton(Rectangle{ 1300, 130, 120, 30 }, "Galilean Cannon"))
+    {
+        restitution = 0.9f;
+
+        //spawn 2 balls
+        //big one
+        physicsObjectCircle* big = new physicsObjectCircle();
+
+        big->position = { spawnX, (float)GetScreenHeight() - spawnY };
+        big->radius = 20;
+        big->mass = 10;
+        big->velocity = { 0,0 };
+
+        world.add(big);
+
+        //small one
+        physicsObjectCircle* small = new physicsObjectCircle();
+
+        small->position = { spawnX, (float)GetScreenHeight() - spawnY - 50 };
+        small->radius = 10;
+        small->mass = 5;
+        small->velocity = { 0,0 };
+
+        world.add(small);
+    }
+
+    //@@@@@@@@@@@@@@@@@@@@@@@
+
+	halfSpace.setRotationDegrees(halfspaceRotation);
 
     //draw launch line
     Vector2 startPos = { spawnX, GetScreenHeight() - spawnY };
     Vector2 velocity = { speed * cos(angle * DEG2RAD), -speed * sin(angle * DEG2RAD) };
     DrawLineEx(startPos, startPos + velocity, 3, RED);
 
-    //%%%%%%%%%%%%%%%%%%%
 	//control coefficient of friction
-	GuiSliderBar(Rectangle{ 80, 240, 200, 20 }, "u", TextFormat("%.2f", coefficientOfFriction), &coefficientOfFriction, 0.0f, 1.0f);
-	//%%%%%%%%%%%%%%%%%%%
+	//GuiSliderBar(Rectangle{ 80, 240, 200, 20 }, "u", TextFormat("%.2f", coefficientOfFriction), &coefficientOfFriction, 0.0f, 1.0f);
+
 
     //draw all objects
     for (int i = 0; i < world.objects.size(); i++)
         world.objects[i]->draw();
 
     /*
-    //$$$$$$$$$$$$$
     //DrawFBD
 	Vector2 location = { 300,900 };
 
@@ -571,7 +712,6 @@ void draw()
 	Vector2 FgPara = Fgravity - FgPrep;
 	Vector2 Ffriction = FgPara * -1;
 	DrawLine(location.x, location.y, location.x + Ffriction.x, location.y + Ffriction.y, ORANGE);
-    //$$$$$$$$$$$
     */
 
     EndDrawing();
@@ -588,7 +728,7 @@ int main()
 	halfSpace.position = { 300, 800 };
 	halfSpace.setRotationDegrees(0);
 	world.add(&halfSpace);
-	halfSpace.grippinesss = 1.0f; //%%%%%%%%%%%%%%%%%
+	halfSpace.grippinesss = 1.0f;
 	//added a new static halfspace to represent a bowl shape
     //halfSpace2.isStatic = true;
 	//halfSpace2.position = { 900, 900 };
