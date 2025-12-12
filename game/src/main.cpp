@@ -1,4 +1,4 @@
-﻿//Lab 8
+﻿//FINAL ASSIGNMENT
 
 #include "raylib.h"
 #include "raymath.h"
@@ -16,12 +16,13 @@ float restitution = 0.9f;
 float weight = 1.0f;
 
 
+
 //new shape type for HalfSpace collision object
 enum physicsShapes
 {
     circle,
 	half_Space,
-    AABB //%%%%%%%%%%%%%%%%
+    AABB 
 };
 
 
@@ -40,6 +41,12 @@ public:
     Color color = GREEN;
     Color defaultColor = GREEN;
 
+    //@@@@@@@@@@@@@@@@@
+	bool isPig = false;  //for declaring pig objects
+	bool isDead = false; //destroyed pig
+    float toughness = 0.0f;
+    //@@@@@@@@@@@@@@@@@
+
     virtual void draw() { DrawText(name.c_str(), position.x, position.y, 10, LIGHTGRAY); } //draw label
 
     virtual physicsShapes Shape() = 0;  //abstract func. must be defined in child classes
@@ -51,7 +58,7 @@ class physicsObjectCircle : public physicsObject
 {
 public:
     float radius = 15;
-
+    
     void draw() override
     {
         DrawCircle(position.x, position.y, radius, color);
@@ -72,6 +79,8 @@ public:
 
 //new physics object representing halfspace
 //which is static and defined by a position point and a surface normal
+
+//the ground. static
 class physicsHalfSpace : public physicsObject
 {
 private:
@@ -100,7 +109,7 @@ public:
 
     void draw() override
     {
-        DrawCircle(position.x, position.y, 8, color);
+        //DrawCircle(position.x, position.y, 8, color);
 
 		DrawLineEx(position, position + normal * 30, 1, color);
     
@@ -115,7 +124,7 @@ public:
 
 };
 
-//%%%%%%%%%%% AABB object
+//AABB object
 class physicsObjectAABB : public physicsObject
 {
 public:
@@ -230,7 +239,7 @@ public:
     {
 		ResetNetForces(); 
 		addGravityForce();
-		applyKinematics(); //i moved the previous logic into apply kinematics
+		applyKinematics();
 		checkCollision(); 
     }
 
@@ -255,8 +264,6 @@ public:
 
 
                 //check if both objects are circles
-                //because my last code, the spawned circles when
-				//collide with halfspace's circle, pushed it downwards
                 if (shapeA == circle && shapeB == circle)
                 {
                     //turn these physics objects into circle objects to access their data
@@ -287,7 +294,7 @@ public:
                         circleB->color = RED;
 
                         
-                        //from perspective of A
+                        // ------------------------------
                         //circle-circle collision response
 
                         //this tells us how fast B is moving toward or away from A
@@ -304,6 +311,8 @@ public:
 
 						float impulseMagnitude = ((1.0f + restitution) * closingVelocity1D * circleA->mass * circleB->mass) / totalMass;
 
+
+						//########################## apply impulse to each object
                         //A--> <-B
                         //A gets pushed opposite the normal, B gets pushed along the normal
 						Vector2 impulseB = normalAtoB * -impulseMagnitude;
@@ -314,6 +323,30 @@ public:
                         //this adjusts each circle velocity based on how large the impulse was
 						circleA->velocity += impulseA / circleA->mass;
 						circleB->velocity += impulseB / circleB->mass;
+
+						//@@@@@@@@@@@@@@@@@@@ momentum calculation
+                        //compute scalar momentum of each circle (p = m * |v|)
+                        float momentumA = circleA->mass * Vector2Length(circleA->velocity);
+                        float momentumB = circleB->mass * Vector2Length(circleB->velocity);
+
+                        //total collision momentum
+                        //this is a simple approximation for impact strength.
+                        float totalMomentum = momentumA + momentumB;
+
+                        //did circleA die?
+                        //check if Circle A is a pig, and if the collision impact exceeds its toughness
+						//if so, mark it as dead
+                        if (circleA->isPig && totalMomentum > circleA->toughness)
+                        {
+                            circleA->isDead = true;
+                        }
+
+                        //did circleB die?
+                        if (circleB->isPig && totalMomentum > circleB->toughness)
+                        {
+                            circleB->isDead = true;
+                        }
+
                     }
                 }
                 
@@ -328,7 +361,10 @@ public:
                     circleHalfSpaceOverlap((physicsObjectCircle*)objB, (physicsHalfSpace*)objA);
                 }
                 
-                //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+                
+
+                //---------------------------------------------------------------------------------------
 				//aabb-aabb collision
                 else if (shapeA == AABB && shapeB == AABB)
                 {
@@ -371,7 +407,6 @@ public:
 
 
                     //position correcting
-                    //percent is for how strongly penetration is corrected
                     const float percent = 0.8f;
                     const float slop = 0.01f; //(ignore tiny penetrations)
 
@@ -424,6 +459,54 @@ public:
                         A->velocity = Vector2Subtract(A->velocity, Vector2Scale(impulse, invMassA));
                     if (!B->isStatic)
                         B->velocity = Vector2Add(B->velocity, Vector2Scale(impulse, invMassB));
+
+                    //@@@@@@@@@@@@@@@@@@@@@@@
+                    //FRICTION IMPULSE CALCULATION
+                    
+                    //rv = relative velocity, normal = n, invMassA/B computed earlier
+                    
+                    //this section computes friction between two colliding bodies (A and B)
+                    
+                    //we already have:
+                    //rv = relative velocity (vB - vA)
+                    //normal = collision normal
+                    //j = normal impulse magnitude (computed earlier)
+                    //invMassA/B = inverse masses
+                    //invMassSum = invMassA + invMassB
+
+
+                    //compute the tangent direction:
+                    //remove the normal component from the relative velocity
+                    Vector2 tangent = Vector2Subtract(rv, Vector2Scale(normal, Vector2DotProduct(rv, normal)));
+                    float tangentLen = Vector2Length(tangent);
+
+					//normalize tangent
+                    if (tangentLen > 1e-6f) tangent = Vector2Scale(tangent, 1.0f / tangentLen);
+                    else tangent = { 0,0 };
+
+                    //vt = relative velocity along the tangent direction (how fast the objects slide)
+                    float vt = Vector2DotProduct(rv, tangent);
+
+                    //compute friction impulse magnitude jt
+                    //opposes sliding, so sign is reversed
+                    float jt = 0.0f;
+                    if (invMassSum > 0.0f) {
+                        jt = -vt / invMassSum;
+                        //static friction limit
+                        float mu = sqrtf(A->grippinesss * B->grippinesss); 
+                        float maxJt = j * mu;
+
+                        //clamp friction impulse
+                        //prevents unrealistic super friction
+                        if (jt > maxJt) jt = maxJt;
+                        if (jt < -maxJt) jt = -maxJt;
+                        Vector2 frictionImpulse = Vector2Scale(tangent, jt);
+
+                        //apply friction impulse to velocities
+                        if (!A->isStatic) A->velocity = Vector2Subtract(A->velocity, Vector2Scale(frictionImpulse, invMassA));
+                        if (!B->isStatic) B->velocity = Vector2Add(B->velocity, Vector2Scale(frictionImpulse, invMassB));
+                    }
+
                 }
 
                 //AABB vs circle collision
@@ -510,6 +593,8 @@ public:
                         box->velocity = Vector2Subtract(box->velocity, Vector2Scale(impulse, invMassA));
                     if (!circ->isStatic)
                         circ->velocity = Vector2Add(circ->velocity, Vector2Scale(impulse, invMassB));
+
+
                 }
 
                 //AABB - HalfSpace collision (boxes stay on ground)
@@ -528,15 +613,77 @@ public:
 
 
 float speed = 80;
-float angle = 10;
+float angle = 0;
 float spawnX = 100;
 float spawnY = 300;
+
+
+//slingshot / dragging state
+bool isDragging = false;
+float slingWidth = 20.0f;
+float slingHeight = 100.0f;
+Vector2 slingshotAnchor = { 150.0f,  (float)GetScreenHeight() - 200.0f };
+Vector2 dragPos = { 0.0f, 0.0f };   //current pos mouse while dragging
+float maxPull = 300.0f;             //clamp the pull distance
+float launchSpeedScale = 2.0f;      //converts pull distance -> launch speed
+Rectangle slingshotRect = { slingshotAnchor.x - 12.0f, slingshotAnchor.y - 24.0f, slingWidth, slingHeight }; //x,y,w,h for rectangle slingshot
+
+
+//@@@@@@@@@@@ BIRD TYPE
+enum BirdType
+{ 
+    BIRD_CIRCLE, 
+    BIRD_BOX 
+};
+
+BirdType currentBird = BIRD_CIRCLE; //default selected bird
+
 
 physicsWorld world;
 physicsHalfSpace halfSpace;
 //physicsHalfSpace halfSpace2; //to represent a bowl shape
 float haldspaceAngle = 0;
 
+//@@@@@@@@@@@   toggle bird type
+void ToggleBirdType()
+{
+    currentBird = (currentBird == BIRD_CIRCLE) ? BIRD_BOX : BIRD_CIRCLE;
+}
+
+void SpawnBirdWithVelocity(Vector2 vel)
+{
+    //spawn position (same as your previous spawn location)
+    Vector2 spawnPos = { spawnX, (float)GetScreenHeight() - spawnY };
+
+    if (currentBird == BIRD_CIRCLE)
+    {
+        physicsObjectCircle* b = new physicsObjectCircle();
+        b->position = spawnPos;
+        b->velocity = vel;
+        b->radius = 15.0f;
+        b->mass = 1.0f;                 //light circular bird
+        b->bounciness = restitution;
+        b->grippinesss = 0.2f;         //tune friction
+        b->color = RED;
+        b->defaultColor = RED;
+        world.add(b);
+    }
+    else //BIRD_BOX
+    {
+        //full width/height for constructor
+        Vector2 boxSize = { 40.0f, 40.0f };
+        float boxMass = 6.0f;           //heavier square bird
+
+        physicsObjectAABB* b = new physicsObjectAABB(spawnPos, boxSize, boxMass);
+        b->velocity = vel;
+        b->bounciness = restitution;
+        b->grippinesss = 0.4f;         //tune friction (higher than circle)
+        b->color = BLUE;
+        b->defaultColor = BLUE;
+        world.add(b);
+    }
+}
+//@@@@@@@@@@@
 
 
 //detects overlap between a circle and a half-space
@@ -678,7 +825,7 @@ bool circleHalfSpaceOverlap(physicsObjectCircle* circle, physicsHalfSpace* halfS
     //return dot < circle->radius;
 }
 
-//detects overlap between a circle and a half-space
+//detects overlap between a box and a half-space
 bool AABBHalfSpaceOverlap(physicsObjectAABB* box, physicsHalfSpace* halfSpace)
 {
 
@@ -838,6 +985,83 @@ void update()
     cleanup();
     world.update();
 
+
+	//dragging logic @@@@@@@@@@@
+    //mouse drag slingshot (drag & release)
+    Vector2 mouse = GetMousePosition();
+
+    //start dragging when left button pressed
+    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+    {
+        //recompute rectangle position each click so its centered on the anchor
+        slingshotRect.x = slingshotAnchor.x - slingshotRect.width * 0.5f;
+        slingshotRect.y = slingshotAnchor.y - slingshotRect.height * 0.5f;
+
+        //only start dragging if:
+        //the mouse is inside the slingshot rectangle
+        // or the mouse is near the slingshot anchor (within 40 pixels)
+        if (CheckCollisionPointRec(mouse, slingshotRect) || Vector2Distance(mouse, slingshotAnchor) < 40.0f)
+        {
+            isDragging = true;
+            dragPos = mouse;
+        }
+    }
+
+    //UPDATE DRAG WHILE HELD
+    //while dragging, update the current drag position (rubber-band end)
+    if (isDragging && IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+    {
+        dragPos = GetMousePosition();
+    }
+
+
+    // RELEASE = LAUNCH
+    if (isDragging && IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+    {
+        isDragging = false;
+        //pull vector is direction and strength of slingshot pull
+        //(From the dragged point to the anchor)
+        Vector2 pull = Vector2Subtract(slingshotAnchor, dragPos);
+        //how far the slingshot was stretched
+        float pullLen = Vector2Length(pull);
+
+        if (pullLen > 2.0f) //avoid tiny clicks
+        {
+			//clamp pull length (to prevent extreme launches)
+            float clamped = fminf(pullLen, maxPull);
+
+            //convert pull distance into launch speed
+            float launchSpeed = clamped * launchSpeedScale;
+
+			//launch direction
+            Vector2 direction = Vector2Normalize(pull);
+            //final launch velocity
+            Vector2 launchVel = Vector2Scale(direction, launchSpeed);
+
+            //spawn the selected bird with computed velocity
+            SpawnBirdWithVelocity(launchVel);
+        }
+    }
+
+
+    //for the existing keyboard spawn
+    if (IsKeyPressed(KEY_SPACE))
+    {
+        Vector2 launchVel = {
+            speed * cosf(angle * DEG2RAD),
+            -speed * sinf(angle * DEG2RAD)
+        };
+        SpawnBirdWithVelocity(launchVel);
+    }
+
+    //press TAB to toggle bird type
+    if (IsKeyPressed(KEY_TAB)) 
+        ToggleBirdType();
+
+    //@@@@@@@@@@@@@@@@@
+
+
+    /*
     if (IsKeyPressed(KEY_SPACE)) //spawn circle
     {
         physicsObjectCircle* newBird = new physicsObjectCircle();
@@ -851,9 +1075,10 @@ void update()
 
         world.add(newBird);
     }
+    */
 
-
-	//%%%%%%%%%%%%%%%% spawn AABB box with pressing B key
+	//spawn AABB box with pressing B key
+    /*
     if (IsKeyPressed(KEY_B))  // spawn an AABB projectile
     {
         Vector2 boxSize = { 40.0f, 40.0f };  // width, height (full size)
@@ -877,7 +1102,7 @@ void update()
 
         world.add(newBox);
     }
-
+    */
 
     /*
     //spawn spheres
@@ -939,6 +1164,16 @@ void update()
 
 
     world.checkCollision(); //update collisions
+
+    for (int i = world.objects.size() - 1; i >= 0; i--)
+    {
+        if (world.objects[i]->isPig && world.objects[i]->isDead)
+        {
+            delete world.objects[i];
+            world.objects.erase(world.objects.begin() + i);
+        }
+    }
+
 }
 
 //draw everything
@@ -1070,8 +1305,67 @@ void draw()
 
     //draw launch line
     Vector2 startPos = { spawnX, GetScreenHeight() - spawnY };
-    Vector2 velocity = { speed * cos(angle * DEG2RAD), -speed * sin(angle * DEG2RAD) };
-    DrawLineEx(startPos, startPos + velocity, 3, RED);
+    //Vector2 velocity = { speed * cos(angle * DEG2RAD), -speed * sin(angle * DEG2RAD) };
+    //DrawLineEx(startPos, startPos + velocity, 3, RED);
+
+    //@@@@@@@@@@@@@@@@@@@@@@@@
+    // SLINGSHOT RENDERING
+    //draws the slingshot rectangle, rubber-band lines, and a preview of the bird
+    //this runs every frame inside the Draw() section
+    //construct the slingshot rectangle based on current anchor + user-defined size
+    //this ensures the slingshot always stays centered on the anchor point
+    Rectangle slingshotRect = {
+    slingshotAnchor.x - slingWidth * 0.5f,
+    slingshotAnchor.y - slingHeight * 0.5f,
+    slingWidth,
+    slingHeight
+    };
+
+
+    //rectangle outline
+    DrawRectangleLinesEx(slingshotRect, 2, WHITE);
+
+    //if dragging, draw rubber band
+    if (isDragging)
+    {
+        //compute raw pull vector, used to determine stretch length
+        Vector2 rawPull = Vector2Subtract(slingshotAnchor, dragPos);
+        float pullLen = Vector2Length(rawPull);
+
+        //clamp the drag position so the visual rubber band can't exceed maxPull
+        Vector2 cappedDrag = dragPos;
+        if (pullLen > maxPull)
+        {
+            cappedDrag = Vector2Add(slingshotAnchor, Vector2Scale(Vector2Normalize(Vector2Subtract(dragPos, slingshotAnchor)), maxPull));
+        }
+
+        //rubber band drawing
+        Vector2 leftFork = { slingshotRect.x + 4.0f, slingshotRect.y + 50 * 0.3f };
+        Vector2 rightFork = { slingshotRect.x + slingshotRect.width - 4.0f, slingshotRect.y + 50 * 0.3f };
+
+        DrawLineEx(leftFork, cappedDrag, 4, BLACK);
+        DrawLineEx(rightFork, cappedDrag, 4, BLACK);
+
+
+        //preview bird at the slingshot anchor (small circle or box) showing what will be launched
+		Vector2 adjustment = { 0.0f, -50.0f };
+
+        if (currentBird == BIRD_CIRCLE)
+        {
+            DrawCircleV(slingshotAnchor + adjustment, 12, RED);
+        }
+        else
+        {
+            DrawRectanglePro(Rectangle{ slingshotAnchor.x - 12.0f, slingshotAnchor.y - 12.0f, 24.0f, 24.0f }, Vector2{ 12.0f,12.0f }, 0.0f, BLUE);
+        }
+
+        //show a tiny velocity preview vector
+        Vector2 pullDir = Vector2Normalize(Vector2Subtract(slingshotAnchor, cappedDrag));
+        float previewSpeed = fminf(Vector2Length(rawPull), maxPull) * launchSpeedScale;
+        DrawLineEx(slingshotAnchor + adjustment, Vector2Add(slingshotAnchor, Vector2Scale(pullDir, previewSpeed * 0.9f)), 3, DARKGRAY);
+    }
+    //@@@@@@@@@@@@@@@@@@@@@@@@@@
+
 
 	//control coefficient of friction
 	//GuiSliderBar(Rectangle{ 80, 240, 200, 20 }, "u", TextFormat("%.2f", coefficientOfFriction), &coefficientOfFriction, 0.0f, 1.0f);
@@ -1105,7 +1399,7 @@ void draw()
     EndDrawing();
 }
 
-//main loop
+//loop
 int main()
 {
     InitWindow(InitialWidth, InitialHeight, "Physics Lab");
@@ -1118,6 +1412,12 @@ int main()
 	world.add(&halfSpace);
 	halfSpace.grippinesss = 1.0f;
 
+
+    //slingshiot setup @@@@@@@@@@@
+    slingshotAnchor = { spawnX, 750.0f };
+    slingshotRect = { slingshotAnchor.x - 12.0f, slingshotAnchor.y - 24.0f, 24.0f, 48.0f };
+
+
     /*
 	added a new static halfspace to represent a bowl shape
     halfSpace2.isStatic = true;
@@ -1126,50 +1426,122 @@ int main()
 	world.add(&halfSpace2);
     */
 
-	//%%%%%%%%%%%%%%% AABB ground
-
+	//AABB ground
     //tower
-	//big box base
-    physicsObjectAABB* base = new physicsObjectAABB
-    (
-        { 600, 780 },          //position
-        { 200, 40 },           //width, normal height
-        0.0f                   //mass = 0 cuz its static
-    );
-    base->bounciness = 0.1f;
-    base->color = WHITE;
-    world.add(base);
-
-
-    //1. box on base 
+    
+    //1.
     physicsObjectAABB* box1 = new physicsObjectAABB(
-        { 600, 780 - 40 },     //1 height above base
-        { 80, 40 },            //normal size
-        2.0f                   //medium mass
+        { 530, 780},     //1 height above base
+        { 50, 50 },            //size
+        2.0f                   //mass
     );
     box1->bounciness = 0.1f;
     box1->color = WHITE;
     world.add(box1);
 
-	//2. smaller box on box1
+	//2.
     physicsObjectAABB* box2 = new physicsObjectAABB(
-        { 600, 780 - 80 },     //stacked above box1
-        { 60, 30 },            //smaller box
-        1.5f                   //lighter mass
+        { 530, 730},     //stacked above box1
+        { 50, 50 },            //size
+        2.0f                   //mass
     );
     box2->bounciness = 0.1f;
     box2->color = WHITE;
     world.add(box2);
 
-	//3. bigger box on box2
+	//3.
     physicsObjectAABB* box3 = new physicsObjectAABB(
-        { 600, 780 - 120 },    //stacked above box2
-        { 100, 50 },           //bigger top box
-        4.0f                   //heavier mass
+        { 530, 680},    //stacked above box2
+        { 50, 50 },            //size
+        2.0f                   //mass
     );
     box3->bounciness = 0.1f;
     box3->color = WHITE;
     world.add(box3);
+
+    //4.
+    physicsObjectAABB* box4 = new physicsObjectAABB(
+        { 670, 780 },     //stacked above box3
+        { 50, 50 },            //size
+        2.0f                   //mass
+    );
+    box4->bounciness = 0.1f;
+    box4->color = WHITE;
+    world.add(box4);
+
+    //5.
+    physicsObjectAABB* box5 = new physicsObjectAABB(
+        { 670, 730 },     //stacked above box4
+        { 50, 50 },            //size
+        2.0f                   //mass
+    );
+    box5->bounciness = 0.1f;
+    box5->color = WHITE;
+    world.add(box5);
+
+    //6
+    physicsObjectAABB* box6 = new physicsObjectAABB(
+        { 670, 680 },    //stacked above box5
+        { 50, 50 },            //size
+        2.0f                   //mass
+    );
+    box6->bounciness = 0.1f;
+    box6->color = WHITE;
+    world.add(box6);
+
+
+
+	//roof box
+    physicsObjectAABB* RoofBox = new physicsObjectAABB
+    (
+        { 600, 640 },          //position
+        { 200, 40 },           //width, normal height
+        5.0f                   //mass heavier
+        );
+    RoofBox->bounciness = 0.1f;
+    RoofBox->color = WHITE;
+    world.add(RoofBox);
+
+
+
+
+    //@@@@@@@@@@@@@@@
+    //pigs
+
+	//pig1 (inside the fortress)
+    physicsObjectCircle* pig1 = new physicsObjectCircle();
+    pig1->position = { 580, 785 };
+    pig1->radius = 15;
+    pig1->mass = 1.0f;
+    pig1->color = GREEN;
+    pig1->isPig = true;
+    pig1->toughness = 7.0f;   //the force needed to kill it
+
+    world.add(pig1);
+
+	//pig 2 (inside the fortress)
+    physicsObjectCircle* pig2 = new physicsObjectCircle();
+    pig2->position = { 620, 785 };
+    pig2->radius = 15;
+    pig2->mass = 1.0f;
+    pig2->color = GREEN;
+    pig2->isPig = true;
+    pig2->toughness = 7.0f;
+
+    world.add(pig2);
+
+	//pig 3 (on the roof)
+	physicsObjectCircle* pig3 = new physicsObjectCircle();
+	pig3->position = { 600, 605 };
+	pig3->radius = 15;
+	pig3->mass = 1.0f;
+	pig3->color = GREEN;
+	pig3->isPig = true;
+	pig3->toughness = 7.0f;
+
+	world.add(pig3);
+
+
 
 
     while (!WindowShouldClose()) {
