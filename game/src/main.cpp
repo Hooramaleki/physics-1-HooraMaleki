@@ -1,4 +1,4 @@
-﻿//Lab 7
+﻿//Lab 8
 
 #include "raylib.h"
 #include "raymath.h"
@@ -12,15 +12,16 @@
 float dt = 1.0f / 60; //fixed timestep
 float time = 0.0f;  
 float coefficientOfFriction = 0.5f;
-float restitution = 0.9f; //@@@@@@@@@@@@@ 
-float weight = 1.0f; //@@@@@@@@@@@@@
+float restitution = 0.9f;
+float weight = 1.0f;
 
 
 //new shape type for HalfSpace collision object
 enum physicsShapes
 {
     circle,
-	half_Space
+	half_Space,
+    AABB //%%%%%%%%%%%%%%%%
 };
 
 
@@ -34,7 +35,7 @@ public:
     float mass = 1;  //kg
 	Vector2 netForce = { 0,0 }; //N
     float grippinesss = 0.5f;
-	float bounciness = 0.9f; //@@@@@ for determining coefficient of restitution
+	float bounciness = 0.9f; //for determining coefficient of restitution
     std::string name = "object";
     Color color = GREEN;
     Color defaultColor = GREEN;
@@ -114,8 +115,43 @@ public:
 
 };
 
+//%%%%%%%%%%% AABB object
+class physicsObjectAABB : public physicsObject
+{
+public:
+    Vector2 size;        //full width/height (size.x = width, size.y = height)
+    float invMass;       //inverse mass (0 for static)
+
+    physicsObjectAABB(Vector2 pos, Vector2 fullSize, float m)
+    {
+        position = pos;     //center of the AABB
+        size = fullSize;    //full width/height
+        //set base-class mass and isStatic
+        mass = m;
+        isStatic = (m == 0.0f);
+        invMass = (isStatic) ? 0.0f : 1.0f / mass;
+    }
+
+	//the edges of the AABB
+    float MinX() const { return position.x - size.x * 0.5f; }
+    float MaxX() const { return position.x + size.x * 0.5f; }
+    float MinY() const { return position.y - size.y * 0.5f; }
+    float MaxY() const { return position.y + size.y * 0.5f; }
+
+    void draw() override
+    {
+        DrawRectangleLines(MinX(), MinY(), size.x, size.y, color);
+    }
+
+    virtual physicsShapes Shape() override
+    {
+        return AABB;
+    }
+};
+
 
 bool circleHalfSpaceOverlap(physicsObjectCircle* circle, physicsHalfSpace* halfSpace);
+bool AABBHalfSpaceOverlap(physicsObjectAABB* box, physicsHalfSpace* halfSpace);
 
 //world to manage physics objects
 class physicsWorld
@@ -194,8 +230,8 @@ public:
     {
 		ResetNetForces(); 
 		addGravityForce();
-		checkCollision(); 
 		applyKinematics(); //i moved the previous logic into apply kinematics
+		checkCollision(); 
     }
 
     void checkCollision()
@@ -250,7 +286,7 @@ public:
                         circleA->color = RED;
                         circleB->color = RED;
 
-                        //@@@@@@@@@@@@@@@@@@@
+                        
                         //from perspective of A
                         //circle-circle collision response
 
@@ -278,28 +314,220 @@ public:
                         //this adjusts each circle velocity based on how large the impulse was
 						circleA->velocity += impulseA / circleA->mass;
 						circleB->velocity += impulseB / circleB->mass;
-
-                        //@@@@@@@@@@@@@@@@@@@
                     }
                 }
+                
                 //if one is circle and one is half space
                 else if (shapeA == circle && shapeB == half_Space)
                 {
                     circleHalfSpaceOverlap((physicsObjectCircle*)objA, (physicsHalfSpace*)objB);
                 }
+                
                 else if (shapeA == half_Space && shapeB == circle)
                 {
                     circleHalfSpaceOverlap((physicsObjectCircle*)objB, (physicsHalfSpace*)objA);
                 }
-				
                 
+                //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+				//aabb-aabb collision
+                else if (shapeA == AABB && shapeB == AABB)
+                {
+                    physicsObjectAABB* A = (physicsObjectAABB*)objA;
+                    physicsObjectAABB* B = (physicsObjectAABB*)objB;
+
+                    //compute overlap on X axis
+                    float dx = B->position.x - A->position.x;
+                    float px = (A->size.x * 0.5f + B->size.x * 0.5f) - fabsf(dx);
+                    //if this is <= 0, boxes do not overlap on X
+                    if (px <= 0.0f) continue;
+
+                    //compute overlap on Y axis
+                    float dy = B->position.y - A->position.y;
+                    float py = (A->size.y * 0.5f + B->size.y * 0.5f) - fabsf(dy);
+                    //if this is <= 0, boxes do not overlap on Y
+                    if (py <= 0.0f) continue;
+
+                    Vector2 normal;
+                    float penetration;
+
+                    //choose axis with less penetration
+                    if (px < py)
+                    {
+                        //resolve horizontally
+                        penetration = px;
+                        normal = { (dx > 0.0f) ? 1.0f : -1.0f, 0.0f };
+                    }
+                    else
+                    {
+                        //resolve vertically
+                        penetration = py;
+                        normal = { 0.0f, (dy > 0.0f) ? 1.0f : -1.0f };
+                    }
+
+                    //computee inverse masses
+                    //if static or mass=0 ,the invMass = 0
+                    float invMassA = (A->isStatic || A->mass == 0.0f) ? 0.0f : 1.0f / A->mass;
+                    float invMassB = (B->isStatic || B->mass == 0.0f) ? 0.0f : 1.0f / B->mass;
+
+
+                    //position correcting
+                    //percent is for how strongly penetration is corrected
+                    const float percent = 0.8f;
+                    const float slop = 0.01f; //(ignore tiny penetrations)
+
+                    //compute correction magnitude with mass weighting
+                    float correctionMag = fmaxf(penetration - slop, 0.0f) / (invMassA + invMassB) * percent;
+                    //correction vector along collision normal
+                    Vector2 correction = Vector2Scale(normal, correctionMag);
+
+                    //move objects apart based on their inverse mass
+                    if (!A->isStatic)
+                        A->position = Vector2Subtract(A->position, Vector2Scale(correction, invMassA));
+                    if (!B->isStatic)
+                        B->position = Vector2Add(B->position, Vector2Scale(correction, invMassB));
+
+                    A->color = RED;
+                    B->color = RED;
+
+
+                    //VELOCITY IMPULSE
+                    //Relative velocity between A and B
+                    //this finds how fast B is moving relative to A
+                    Vector2 rv = Vector2Subtract(B->velocity, A->velocity);
+                    //moving toward each other: negative
+                    //moving apart: positive
+                    float velAlongNormal = Vector2DotProduct(rv, normal);
+
+                    //if positive, objects are separating, no impulse needed
+                    if (velAlongNormal > 0.0f) continue;
+
+                    //Compute restitution (bounce is very low)
+                    float e = A->bounciness * B->bounciness;
+                    if (e < 0.0f) e = 0.0f;
+                    if (e > 1.0f) e = 1.0f;
+
+                    float j = -(1.0f + e) * velAlongNormal;
+                    float invMassSum = invMassA + invMassB;
+                    if (invMassSum > 0.0f)
+                        j /= invMassSum;
+                    else
+                        j = 0.0f;
+
+                    Vector2 impulse = Vector2Scale(normal, j);
+
+                    //apply impulse based on inverse mass
+                    //object A gets pushed opposite the normal
+                    //object B gets pushed along the normal
+                    //lighter objects(bigger inverse mass) change velocity more
+                    //Static objects do not move
+                    if (!A->isStatic)
+                        A->velocity = Vector2Subtract(A->velocity, Vector2Scale(impulse, invMassA));
+                    if (!B->isStatic)
+                        B->velocity = Vector2Add(B->velocity, Vector2Scale(impulse, invMassB));
+                }
+
+                //AABB vs circle collision
+                else if (shapeA == AABB && shapeB == circle)
+                {
+                    physicsObjectAABB* box = (physicsObjectAABB*)objA;
+                    physicsObjectCircle* circ = (physicsObjectCircle*)objB;
+
+                    //find nearest point on AABB to circle center
+                    Vector2 half = { box->size.x * 0.5f, box->size.y * 0.5f };
+
+                    //clamp circle center to inside the AABB bounds
+                    float nx = fmaxf(box->position.x - half.x,
+                        fminf(circ->position.x, box->position.x + half.x));
+                    float ny = fmaxf(box->position.y - half.y,
+                        fminf(circ->position.y, box->position.y + half.y));
+
+                    Vector2 closest = { nx, ny };
+
+                    //CHECKING IF CIRCLE IS COLLIDING WITH BOX
+                    Vector2 diff = Vector2Subtract(circ->position, closest); //vector from box to circle
+                    float distSq = diff.x * diff.x + diff.y * diff.y;
+                    float r = circ->radius;
+
+                    //if the distance is bigger than the radius then they are not colliding.
+                    if (distSq >= r * r) continue; //no collision
+
+                    //compute collision normal
+                    float dist = sqrtf(distSq);
+                    Vector2 normal;
+
+                    if (dist != 0.0f)
+                        normal = { diff.x / dist, diff.y / dist };
+                    else
+                        normal = { 0.0f, -1.0f }; //circle center exactly on box corner
+
+
+					//compute penetration depth
+                    float penetration = r - dist; //how deep the circle is inside the box
+
+                    //inverse masses (same rule: static = 0 mass)
+                    //used so lighter objects move more on collision
+                    float invMassA = (box->isStatic || box->mass == 0.0f) ? 0.0f : 1.0f / box->mass;
+                    float invMassB = (circ->isStatic || circ->mass == 0.0f) ? 0.0f : 1.0f / circ->mass;
+
+                    //POSITION CORRECTION (removing overlap)
+                    //small % of penetration is corrected
+                    const float percent = 0.2f;
+                    const float slop = 0.01f;
+
+                    float correctionMag = fmaxf(penetration - slop, 0.0f) / (invMassA + invMassB) * percent;
+                    Vector2 correction = Vector2Scale(normal, correctionMag);
+
+					//push box backward and circle forward based on their inverse mass
+                    if (!box->isStatic)
+                        box->position = Vector2Subtract(box->position, Vector2Scale(correction, invMassA));
+                    if (!circ->isStatic)
+                        circ->position = Vector2Add(circ->position, Vector2Scale(correction, invMassB));
+
+                    box->color = RED;
+                    circ->color = RED;
+
+                    //IMPULSE RESPONSE
+                    Vector2 rv = Vector2Subtract(circ->velocity, box->velocity);
+
+                    //project onto normal
+                    float velAlongNormal = Vector2DotProduct(rv, normal);
+                    if (velAlongNormal > 0) continue;
+
+                    float restitution = box->bounciness * circ->bounciness; //combine bounciness
+
+                    float j = -(1.0f + restitution) * velAlongNormal;
+                    float invMassSum = invMassA + invMassB;
+
+                    if (invMassSum > 0)
+                        j /= invMassSum;
+                    else
+                        j = 0.0f;
+
+                    Vector2 impulse = Vector2Scale(normal, j);
+
+                    //apply impulse (heavier objects move less)
+                    if (!box->isStatic)
+                        box->velocity = Vector2Subtract(box->velocity, Vector2Scale(impulse, invMassA));
+                    if (!circ->isStatic)
+                        circ->velocity = Vector2Add(circ->velocity, Vector2Scale(impulse, invMassB));
+                }
+
+                //AABB - HalfSpace collision (boxes stay on ground)
+                else if (shapeA == AABB && shapeB == half_Space)
+                {
+					AABBHalfSpaceOverlap((physicsObjectAABB*)objA, (physicsHalfSpace*)objB);
+                }
+                else if (shapeA == half_Space && shapeB == AABB)
+                {
+					AABBHalfSpaceOverlap((physicsObjectAABB*)objB, (physicsHalfSpace*)objA);
+                }
             }
         }
     }
 };
 
 
-float speed = 40;
+float speed = 80;
 float angle = 10;
 float spawnX = 100;
 float spawnY = 300;
@@ -378,7 +606,6 @@ bool circleHalfSpaceOverlap(physicsObjectCircle* circle, physicsHalfSpace* halfS
         //this will store the final friction vector
         Vector2 Ffriction = { 0, 0 };
 
-        //@@@@@@@@@@@@@@@@@@@
         //bouncing
         //from perspective of A
 		//collision response of circle and half-space
@@ -397,7 +624,6 @@ bool circleHalfSpaceOverlap(physicsObjectCircle* circle, physicsHalfSpace* halfS
 		//velFinal = velInitial + -(1 + restitution * velInitial)
 		circle->velocity += n * closingVelocity1D * -(1.0f + restitution);
 
-		//@@@@@@@@@@@@@@@@@@@
         
 
         //case1
@@ -452,6 +678,140 @@ bool circleHalfSpaceOverlap(physicsObjectCircle* circle, physicsHalfSpace* halfS
     //return dot < circle->radius;
 }
 
+//detects overlap between a circle and a half-space
+bool AABBHalfSpaceOverlap(physicsObjectAABB* box, physicsHalfSpace* halfSpace)
+{
+
+    Vector2 normal = halfSpace->getNormal();
+    Vector2 pointOnPlane = halfSpace->position;
+
+    //compute the signed distance from box center to the plane
+    Vector2 signedDistance = box->position - pointOnPlane;
+
+    //distance from the box center to the plane
+    float dot = Vector2DotProduct(signedDistance, normal);
+    //this is the vector pointing from the plane toward the box center
+    Vector2 ProjectionDisplacementOnToNormal = normal * dot;
+
+
+    float dx = box->position.y - ProjectionDisplacementOnToNormal.y;
+    float overlap = (box->size.y * 0.5f + box->position.y) - fabsf(dx);
+
+    if (overlap > 0)
+    {
+        //i dont know if we still need them to turn red touching the half-space
+        //box->color = RED;
+
+        //compute the Minimum Translation Vector (MTV)
+        //tells us how much to move the box out of the half-space
+        //mtv = insertion depth
+        Vector2 mtv = normal * overlap;
+        box->position += mtv; //move box out of half-space
+
+
+
+        //compute gravity force on this box:  F = m * g
+        Vector2 Fgravity = world.accelerationGravity * box->mass;
+        DrawLineEx(box->position, box->position + Fgravity, 2, PURPLE);   // render gravity
+
+        Vector2 n = halfSpace->getNormal();
+        Vector2 FgPrep = n * Vector2DotProduct(Fgravity, n); //project gravity onto the surface normal
+
+        //normal force is opposite that normal component
+        //it cancels the part of gravity pushing into the surface
+        Vector2 Fnormal = FgPrep * -1;
+        box->netForce += Fnormal;  //add normal force to the object's net forces
+        DrawLineEx(box->position, box->position + Fnormal, 1, GREEN);    // render normal
+
+        //component of gravity along the surface
+        //this is what tries to make the box slide
+        Vector2 FgPara = Fgravity - FgPrep;
+        float FgParaLen = Vector2Length(FgPara);
+
+        //coefficient of friction (object * plane)
+        float u = box->grippinesss * halfSpace->grippinesss;
+        float frictionMagnitude = u * Vector2Length(Fnormal); //maximum possible friction 
+
+        //determine friction direction:
+        //prefer opposing in-plane velocity
+        Vector2 vel = box->velocity;
+        Vector2 velParallel = vel - n * Vector2DotProduct(vel, n); //velocity projected onto plane
+        float velParallelLen = Vector2Length(velParallel);
+
+        //this will store the final friction vector
+        Vector2 Ffriction = { 0, 0 };
+
+        //bouncing
+        //from perspective of A
+        //collision response of box and half-space
+
+        //project the box velocity into the collision normal
+        //this gives the box moving into or away from the half-space
+        float closingVelocity1D = Vector2DotProduct(box->velocity, n);
+
+        //if dot is negative then we are colliding, if positive then we are not colliding
+        if (closingVelocity1D >= 0) return true;
+
+        //the restitution is calculated by each of the objects bounciness
+        float restitution = box->bounciness * halfSpace->bounciness;
+
+        //this flips the normal component of velocity and scales it by restitution
+        //velFinal = velInitial + -(1 + restitution * velInitial)
+        box->velocity += n * closingVelocity1D * -(1.0f + restitution);
+
+
+
+        //case1
+        if (velParallelLen > 0.001f)
+        {
+            //kinetic friction : friction always opposes motion
+            Vector2 frictionDirection = Vector2Scale(Vector2Normalize(velParallel), -1.0f);
+            Ffriction = Vector2Scale(frictionDirection, frictionMagnitude);
+        }
+
+        //case2
+        else
+        {
+            //object is either not moving or about to start sliding
+            if (FgParaLen > 0.0001f)
+            {
+                //friction is strong enough to cancel in-plane gravity which means object remains not moving
+                if (FgParaLen <= frictionMagnitude)
+                {
+                    //exactly cancel the in-plane gravity
+                    Ffriction = Vector2Scale(Vector2Normalize(FgPara), -FgParaLen); // -FgPara (exact cancel)
+                }
+                else
+                {
+                    //gravity is too strong means static friction breaks
+                    Vector2 frictionDirection = Vector2Scale(Vector2Normalize(FgPara), -1.0f);
+                    Ffriction = Vector2Scale(frictionDirection, frictionMagnitude);
+                }
+            }
+            else
+            {
+                //no in-plane forces and no sliding -> no friction
+                Ffriction = { 0, 0 };
+            }
+        }
+
+
+        //apply friction and draw
+        box->netForce += Ffriction;
+        if (!(Ffriction.x == 0 && Ffriction.y == 0))
+            DrawLineEx(box->position, box->position + Ffriction, 2, ORANGE); //render friction
+
+
+
+
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
+
 //remove objects offscreen
 void cleanup()
 {
@@ -486,11 +846,38 @@ void update()
                               -speed * (float)sin(angle * DEG2RAD) };
         newBird->radius = 15;
         newBird->color = GREEN;
-		newBird->bounciness = restitution; //@@@@@@@@@@@@@@@@
-        newBird->mass = weight; //@@@@@@@@@@@@@@@@
+		newBird->bounciness = restitution;
+        newBird->mass = weight;
 
         world.add(newBird);
     }
+
+
+	//%%%%%%%%%%%%%%%% spawn AABB box with pressing B key
+    if (IsKeyPressed(KEY_B))  // spawn an AABB projectile
+    {
+        Vector2 boxSize = { 40.0f, 40.0f };  // width, height (full size)
+
+        physicsObjectAABB* newBox = new physicsObjectAABB(
+            { spawnX, (float)GetScreenHeight() - spawnY },   // start position
+            boxSize,                                         // full width/height
+            weight                                           // mass
+        );
+
+        newBox->velocity =
+        {
+        (float)(speed * cos(angle * DEG2RAD)),
+        (float)(-speed * sin(angle * DEG2RAD))
+        };
+
+
+        newBox->bounciness = restitution;
+        newBox->color = GREEN;
+        newBox->defaultColor = GREEN;
+
+        world.add(newBox);
+    }
+
 
     /*
     //spawn spheres
@@ -542,13 +929,13 @@ void update()
         s->grippinesss = 0.8f;
         world.add(s);
     }
-    */
 
     //sample angles
     if (IsKeyPressed(KEY_ONE))   angle = 0.0f;
     if (IsKeyPressed(KEY_TWO))   angle = 45.0f;
     if (IsKeyPressed(KEY_THREE)) angle = 60.0f;
     if (IsKeyPressed(KEY_FOUR))  angle = 90.0f;
+    */
 
 
     world.checkCollision(); //update collisions
@@ -580,16 +967,16 @@ void draw()
 
 	//half space
     //GUI sliders for adjusting half-space position and rotation
-    DrawText("HalfSpace (X):", 10, 160, 14, RAYWHITE);
-    GuiSliderBar(Rectangle{ 120, 160, 250, 20 }, "", TextFormat("%.0f", halfSpace.position.x), &halfSpace.position.x, 0.0f, (float)GetScreenWidth());
-    DrawText("HalfSpace (y):", 10, 180, 14, RAYWHITE);
-    GuiSliderBar(Rectangle{ 120, 180, 250, 20 }, "", TextFormat("%.0f", halfSpace.position.y), &halfSpace.position.y, 0.0f, (float)GetScreenWidth());
+    //DrawText("HalfSpace (X):", 10, 160, 14, RAYWHITE);
+    //GuiSliderBar(Rectangle{ 120, 160, 250, 20 }, "", TextFormat("%.0f", halfSpace.position.x), &halfSpace.position.x, 0.0f, (float)GetScreenWidth());
+    //DrawText("HalfSpace (y):", 10, 180, 14, RAYWHITE);
+    //GuiSliderBar(Rectangle{ 120, 180, 250, 20 }, "", TextFormat("%.0f", halfSpace.position.y), &halfSpace.position.y, 0.0f, (float)GetScreenWidth());
 
 	float halfspaceRotation = halfSpace.getRotation();
-    DrawText("Rotation:", 10, 200, 14, RAYWHITE);
-    GuiSliderBar(Rectangle{ 120, 200, 250, 20 }, "", TextFormat("%.0f", halfSpace.getRotation()), &halfspaceRotation, 0.0f, (float)GetScreenWidth());
+    //DrawText("Rotation:", 10, 200, 14, RAYWHITE);
+    //GuiSliderBar(Rectangle{ 120, 200, 250, 20 }, "", TextFormat("%.0f", halfSpace.getRotation()), &halfspaceRotation, 0.0f, (float)GetScreenWidth());
 
-    //@@@@@@@@@@@@@@@@@@@@@@@@@@
+
 	//control restitution 
     DrawText("Restitution:", 10, 240, 14, RAYWHITE);
 	GuiSliderBar(Rectangle{ 120, 240, 250, 20 }, "", TextFormat("%.2f", restitution), &restitution, 0.0f, 1.0f);
@@ -597,14 +984,13 @@ void draw()
 	//mass adjusting slider
     DrawText("Mass:", 10, 280, 14, RAYWHITE);
     GuiSliderBar(Rectangle{ 120, 280, 300, 20 }, "", TextFormat("%.1f", weight), &weight, 0.1f, 20.0f);
-    //@@@@@@@@@@@@@@@@@@@@@
+
 
     DrawText("*** SPACE = launch *** press 1 for 0 degrees, 2 for 45, 3 for 60, 4 for 90", 10, 310, 14, RAYWHITE);
 
 
-    //@@@@@@@@@@@@@@@@@@@@@@@
 	//reset world button
-
+    /*
     if (GuiButton(Rectangle{ 1300, 40, 120, 30 }, "Reset World"))
     {
         for (int i = world.objects.size() - 1; i >= 0; i--)
@@ -616,8 +1002,12 @@ void draw()
             }
         }
     }
+    */
+
+    halfSpace.setRotationDegrees(halfspaceRotation);
 
     //bouncy balls
+    /*
     //restitution = 1.0, friction low, mass small
     if (GuiButton(Rectangle{ 1300, 70, 120, 30 }, "Bouncy"))
     {
@@ -675,10 +1065,8 @@ void draw()
 
         world.add(small);
     }
+    */
 
-    //@@@@@@@@@@@@@@@@@@@@@@@
-
-	halfSpace.setRotationDegrees(halfspaceRotation);
 
     //draw launch line
     Vector2 startPos = { spawnX, GetScreenHeight() - spawnY };
@@ -729,11 +1117,60 @@ int main()
 	halfSpace.setRotationDegrees(0);
 	world.add(&halfSpace);
 	halfSpace.grippinesss = 1.0f;
-	//added a new static halfspace to represent a bowl shape
-    //halfSpace2.isStatic = true;
-	//halfSpace2.position = { 900, 900 };
-	//halfSpace2.setRotationDegrees(-20);
-	//world.add(&halfSpace2);
+
+    /*
+	added a new static halfspace to represent a bowl shape
+    halfSpace2.isStatic = true;
+	halfSpace2.position = { 900, 900 };
+	halfSpace2.setRotationDegrees(-20);
+	world.add(&halfSpace2);
+    */
+
+	//%%%%%%%%%%%%%%% AABB ground
+
+    //tower
+	//big box base
+    physicsObjectAABB* base = new physicsObjectAABB
+    (
+        { 600, 780 },          //position
+        { 200, 40 },           //width, normal height
+        0.0f                   //mass = 0 cuz its static
+    );
+    base->bounciness = 0.1f;
+    base->color = WHITE;
+    world.add(base);
+
+
+    //1. box on base 
+    physicsObjectAABB* box1 = new physicsObjectAABB(
+        { 600, 780 - 40 },     //1 height above base
+        { 80, 40 },            //normal size
+        2.0f                   //medium mass
+    );
+    box1->bounciness = 0.1f;
+    box1->color = WHITE;
+    world.add(box1);
+
+	//2. smaller box on box1
+    physicsObjectAABB* box2 = new physicsObjectAABB(
+        { 600, 780 - 80 },     //stacked above box1
+        { 60, 30 },            //smaller box
+        1.5f                   //lighter mass
+    );
+    box2->bounciness = 0.1f;
+    box2->color = WHITE;
+    world.add(box2);
+
+	//3. bigger box on box2
+    physicsObjectAABB* box3 = new physicsObjectAABB(
+        { 600, 780 - 120 },    //stacked above box2
+        { 100, 50 },           //bigger top box
+        4.0f                   //heavier mass
+    );
+    box3->bounciness = 0.1f;
+    box3->color = WHITE;
+    world.add(box3);
+
 
     while (!WindowShouldClose()) {
         update();
